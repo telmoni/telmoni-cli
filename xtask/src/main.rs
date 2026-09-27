@@ -63,6 +63,7 @@ fn ci() -> Result<()> {
         &[("RUSTDOCFLAGS", "-D warnings")],
     )?;
     cargo(&["deny", "check"])?;
+    verify_sdks(&workspace_root())?;
     println!("✓ ci: gate passed");
     Ok(())
 }
@@ -122,5 +123,39 @@ fn toolchain_msrv_agree(root: &Path) -> Result<()> {
     if manifest_msrv != toolchain_ch {
         bail!("rust-version \"{manifest_msrv}\" != toolchain \"{toolchain_ch}\"");
     }
+    Ok(())
+}
+
+fn verify_sdks(root: &Path) -> Result<()> {
+    println!("$ npm test --prefix sdk/typescript");
+    let status = Command::new("npm")
+        .args(["test", "--prefix", "sdk/typescript"])
+        .current_dir(root)
+        .status()
+        .context("running npm test")?;
+    if !status.success() {
+        bail!("TypeScript SDK tests failed");
+    }
+
+    println!("$ cd sdk/go && go test ./...");
+    let status = Command::new("go")
+        .args(["test", "./..."])
+        .current_dir(root.join("sdk/go"))
+        .status()
+        .context("running go test")?;
+    if !status.success() {
+        bail!("Go SDK tests failed");
+    }
+
+    println!("$ cd sdk/python && .venv/bin/pytest");
+    let pytest = root.join("sdk/python/.venv/bin/pytest");
+    let status = Command::new(pytest)
+        .current_dir(root.join("sdk/python"))
+        .status()
+        .context("running pytest")?;
+    if !status.success() {
+        bail!("Python SDK tests failed");
+    }
+
     Ok(())
 }
