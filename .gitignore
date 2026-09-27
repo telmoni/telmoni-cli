@@ -1,0 +1,65 @@
+/target
+# Nested target dirs: the fuzz harness is its own workspace and builds into `fuzz/target`.
+**/target/
+# A throwaway build dir for a root test run: `sudo -E env CARGO_TARGET_DIR="$PWD/target-privileged"
+# cargo test ...` sends root-owned artifacts here so they never poison `./target`.
+/target-privileged
+# `cargo llvm-cov`'s rendered HTML report, if you run one by hand.
+/target-coverage
+**/*.rs.bk
+# Crash core dumps (e.g. a linker OOM writes `core.<pid>` to the cwd): never committed.
+core.*
+*.log
+.claude
+# Built guest images and the downloaded inputs they are built from (`cargo xtask build-rootfs`),
+# never committed.
+/artifacts/
+# The local vendor mirror of all sha-pinned upstream inputs (`cargo xtask vendor`): a self-hoster
+# produces it to build offline; like /artifacts/ it holds downloaded images, never committed.
+/vendor/
+
+# ── Scratch / planning ────────────────────────────────────────────────────────
+scratch/
+
+# cargo-fuzz working data (the `fuzz/` crate is excluded from the workspace; `fuzz/target` is already
+# covered by `**/target/` above). Corpora and crash artifacts are generated, not committed.
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+dist/
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Editors & IDEs ────────────────────────────────────────────────────────────
+.vscode/
+.zed/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+
+# ── SDKs ──────────────────────────────────────────────────────────────────────
+# The SDKs under `sdk/` are four ecosystems in one tree, and each vendors differently.
+sdk/*/node_modules/
+sdk/*/target/
+sdk/*/dist/
+sdk/*/.venv/
+sdk/**/__pycache__/
+sdk/*/.pytest_cache/
+sdk/*/.mypy_cache/
+sdk/*/.ruff_cache/
+sdk/**/*.egg-info/
+*.egg-info/
+*.pyc
+
+# The compiled FFI modules
+sdk/**/*.node
+sdk/**/*.so
+sdk/**/*.pyd
+sdk/**/*.dylib
+
+# The plan is kept outside the repository, under scratch/.
+/ROADMAP.md

@@ -1,0 +1,17 @@
+[package]
+name = "telmoni-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Official Rust SDK for the Telmoni platform"
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+readme = "README.md"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,121 @@
+# Release: a human pushes a `v*` tag, this builds `cargo xtask dist` on the two hosts the project
+# targets, and publishes the assets `install.sh` fetches from `releases/latest/download/`.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check-version:
+    name: the tag matches the workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check the tag
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"${want%%-*}\"" Cargo.toml \
+            || { echo "::error::Cargo.toml's workspace version is not ${want%%-*}; bump it before tagging"; exit 1; }
+          [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ] \
+            || { echo "::error::$GITHUB_REF_NAME is a lightweight tag; the notes come from the annotation (git tag -a)"; exit 1; }
+
+  dist-macos:
+    name: dist (macos-aarch64)
+    needs: check-version
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain components
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the release artifacts
+        run: cargo xtask dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos-aarch64
+          path: |
+            dist/telmoni-macos-*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  dist-linux:
+    name: dist (linux-x86_64)
+    needs: check-version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain components
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the release artifacts
+        run: cargo xtask dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-x86_64
+          path: |
+            dist/telmoni-linux-*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: [dist-macos, dist-linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: built
+          pattern: dist-*
+
+      - name: Assemble the release directory
+        run: |
+          set -euo pipefail
+          mkdir release
+          find built -name "telmoni-*.tar.gz" -exec cp {} release/ \;
+          find built -name "SHA256SUMS" -exec cat {} + | sort -u > release/SHA256SUMS
+          cp install.sh release/
+          (cd release && sha256sum install.sh >> SHA256SUMS)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=
+          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag $prerelease \
+            release/telmoni-*.tar.gz release/SHA256SUMS release/install.sh

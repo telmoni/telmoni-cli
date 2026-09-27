@@ -1,0 +1,196 @@
+# Telmoni CLI & Multi-Language SDKs
+
+[![CI](https://github.com/kendricklawton/telmoni/actions/workflows/ci.yml/badge.svg)](https://github.com/kendricklawton/telmoni/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+The official command-line interface (`telmoni`) and client SDKs for Telmoni.
+
+---
+
+## Installation
+
+### Shell Installer (macOS & Linux)
+
+```console
+curl -fsSL https://raw.githubusercontent.com/kendricklawton/telmoni/main/install.sh | sh
+```
+
+Pin a specific release or override the install directory:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/kendricklawton/telmoni/main/install.sh | TELMONI_VERSION=0.0.1 sh
+```
+
+### From Source (Rust toolchain required)
+
+```console
+git clone https://github.com/kendricklawton/telmoni.git
+cd telmoni
+cargo install --path . --locked
+```
+
+---
+
+## CLI Usage
+
+### 1. Authentication
+
+#### Interactive Login (Device Authorization Grant, RFC 8628)
+
+Authenticate via device-code login through Telmoni's `/cli` door, signing in like the GitHub and Stripe CLIs:
+
+```console
+telmoni login
+```
+
+The CLI prints a one-time verification code and URL. Approve the code in any browser on any machine:
+
+```
+First copy your one-time code: ABCD-EFGH
+Then open https://telmoni.com/device and enter it.
+```
+
+Your session appears on the Active sessions page at `telmoni.com` (labelled e.g. "Telmoni CLI (macOS)"). Ending the session on the Active sessions page at telmoni.com ends the CLI's session.
+
+Credentials are saved with `0600` permissions at `~/Library/Application Support/telmoni/credentials.json` on macOS and `~/.config/telmoni/credentials.json` on Linux. Credentials are not encrypted.
+
+#### Programmatic / CI Login (API Key)
+
+For automated environments, CI/CD runners, and headless servers, authenticate using a Telmoni API key:
+
+```console
+telmoni login --key telmoni_your_api_key_here
+```
+
+### 2. Verify Session Status
+
+```console
+telmoni status
+# Or alias:
+telmoni whoami
+```
+
+Output formatted as JSON:
+
+```console
+telmoni status --json
+```
+
+### 3. Organizations
+
+List organizations your account belongs to:
+
+```console
+telmoni org list
+```
+
+Switch your active organization context:
+
+```console
+telmoni org switch org_xxxxxxxxxxxx
+```
+
+You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`.
+
+### 4. Log Out
+
+```console
+telmoni logout
+```
+
+Revokes your CLI session row on the server and deletes the local credentials file.
+
+### 5. Configuration
+
+Configure CLI defaults such as the Telmoni endpoint:
+
+```console
+# List current configuration
+telmoni config list
+
+# Set a configuration value
+telmoni config set endpoint https://telmoni.com
+
+# Get a configuration value
+telmoni config get endpoint
+```
+
+#### Supported Configuration Keys
+
+| Key | Description | Default |
+|---|---|---|
+| `endpoint` | Telmoni endpoint URL | `https://telmoni.com` |
+| `output_format` | CLI output format (`text` or `json`) | `text` |
+
+#### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
+| `TELMONI_API_KEY` | Direct API key for CLI operations / CI |
+| `TELMONI_ORG` | Organization ID override for `status`, `whoami`, and `logout` |
+
+---
+
+## Repository Layout
+
+```text
+├── src/            # Telmoni CLI source code (telmoni-cli crate)
+├── xtask/          # Dev orchestration (CI gate, release packaging)
+├── sdk/            # Multi-language client SDKs
+│   ├── go/         # Go SDK
+│   ├── python/     # Python SDK
+│   ├── rust/       # Rust SDK (telmoni-sdk crate)
+│   └── typescript/ # TypeScript / JavaScript SDK
+└── tests/          # Integration & contract tests
+```
+
+---
+
+## Multi-Language SDKs
+
+All SDKs provide idiomatic clients for communicating with the Telmoni platform.
+
+| Language | Directory | Package / Module |
+|---|---|---|
+| **TypeScript / JS** | [`sdk/typescript`](sdk/typescript/) | `telmoni` (npm) |
+| **Go** | [`sdk/go`](sdk/go/) | `github.com/kendricklawton/telmoni/sdk/go` |
+| **Python** | [`sdk/python`](sdk/python/) | `telmoni` (PyPI) |
+| **Rust** | [`sdk/rust`](sdk/rust/) | `telmoni-sdk` (crates.io) |
+
+See each directory's `README.md` for language-specific quickstart guides and API references.
+
+---
+
+## Development & Testing
+
+Run the full local gate (formatting, strict clippy, tests, docs, dependency check):
+
+```console
+cargo xtask ci
+```
+
+Run tests across all SDKs:
+
+```console
+# TypeScript SDK
+cd sdk/typescript && npm run verify
+
+# Go SDK
+cd sdk/go && go test -v ./...
+
+# Python SDK
+cd sdk/python && pytest
+```
+
+---
+
+## Security
+
+Please report vulnerabilities following our [Security Policy](SECURITY.md). Do not open public issues for security vulnerabilities.
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE)).

@@ -1,0 +1,54 @@
+{
+  "name": "telmoni",
+  "version": "0.1.0",
+  "description": "Official TypeScript & JavaScript SDK for the Telmoni platform",
+  "license": "Apache-2.0",
+  "author": "Kendrick Lawton",
+  "homepage": "https://github.com/kendricklawton/telmoni",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kendricklawton/telmoni.git",
+    "directory": "sdk/typescript"
+  },
+  "keywords": [
+    "telmoni",
+    "sdk",
+    "api"
+  ],
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm run build && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5",
+    "vitest": "^5.0.0"
+  }
+}

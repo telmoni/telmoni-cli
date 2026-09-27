@@ -1,0 +1,54 @@
+title: "Q: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask questions about using or developing with the Telmoni CLI and multi-language SDKs.
+  - type: textarea
+    id: question
+    attributes:
+      label: What is your question?
+      description: Provide as much context as possible.
+    validations:
+      required: true
+  - type: input
+    id: cli-version
+    attributes:
+      label: CLI Version
+      description: Run `telmoni --version`
+      placeholder: telmoni 0.0.1
+    validations:
+      required: false
+  - type: input
+    id: os-arch
+    attributes:
+      label: Operating System & Architecture
+      description: "`uname -srm`"
+      placeholder: Darwin 24.3.0 arm64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which area does your question relate to?
+      options:
+        - Authentication (device-code login, login, API keys)
+        - CLI usage (telmoni config, status)
+        - Rust SDK (telmoni-sdk)
+        - TypeScript SDK (telmoni)
+        - Go SDK
+        - Python SDK
+        - Building from source / CI
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I have searched existing discussions and issues to verify this is not a duplicate.
+          required: true

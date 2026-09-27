@@ -1,0 +1,70 @@
+package telmoni
+
+import (
+	"os"
+	"strings"
+)
+
+// DefaultEndpoint is the default Telmoni API endpoint URL.
+const DefaultEndpoint = "https://telmoni.com"
+
+// Config holds client configuration for the Telmoni platform.
+type Config struct {
+	Endpoint  string `json:"endpoint"`
+	TenantID  string `json:"tenant_id,omitempty"`
+	AuthToken string `json:"auth_token,omitempty"`
+}
+
+// DefaultConfig returns the default SDK configuration.
+func DefaultConfig() Config {
+	return Config{
+		Endpoint: DefaultEndpoint,
+	}
+}
+
+// ConfigFromEnv reads configuration from standard Telmoni environment variables.
+func ConfigFromEnv() Config {
+	endpoint := os.Getenv("TELMONI_ENDPOINT")
+	if endpoint == "" {
+		endpoint = os.Getenv("TELMONI_API_URL")
+	}
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+
+	return Config{
+		Endpoint:  strings.TrimRight(endpoint, "/"),
+		TenantID:  os.Getenv("TELMONI_TENANT_ID"),
+		AuthToken: os.Getenv("TELMONI_API_KEY"),
+	}
+}
+
+// Client is the primary entrypoint for communicating with Telmoni.
+type Client struct {
+	config Config
+}
+
+// Telmoni is a convenience alias for Client.
+type Telmoni = Client
+
+// New creates a new Telmoni client with the provided configuration.
+func New(cfg Config) *Client {
+	if cfg.Endpoint == "" {
+		cfg.Endpoint = DefaultEndpoint
+	}
+	cfg.Endpoint = strings.TrimRight(cfg.Endpoint, "/")
+
+	return &Client{
+		config: cfg,
+	}
+}
+
+// NewFromEnv creates a new Telmoni client initialized from environment variables.
+func NewFromEnv() *Client {
+	return New(ConfigFromEnv())
+}
+
+// Config returns the active client configuration.
+func (c *Client) Config() Config {
+	return c.config
+}

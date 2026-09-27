@@ -1,0 +1,142 @@
+# CI: the host-safe gate for the Telmoni CLI and SDK workspace.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  gate:
+    name: gate (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: macos-aarch64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the toolchain components
+        run: rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run the gate
+        run: cargo xtask ci
+
+  sdks:
+    name: test sdks (${{ matrix.sdk }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: typescript
+          - sdk: go
+          - sdk: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        if: matrix.sdk == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify TypeScript SDK
+        if: matrix.sdk == 'typescript'
+        run: |
+          cd sdk/typescript
+          npm ci
+          npm run verify
+
+      - name: Setup Go
+        if: matrix.sdk == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Verify Go SDK
+        if: matrix.sdk == 'go'
+        run: |
+          cd sdk/go
+          go test -v ./...
+
+      - name: Setup Python
+        if: matrix.sdk == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Python SDK
+        if: matrix.sdk == 'python'
+        run: |
+          cd sdk/python
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          ruff check .
+          ruff format --check .
+          mypy
+          pytest
+
+  lint-workflows:
+    name: lint workflows (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$tarball" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "${ACTIONLINT_SHA256}  ${tarball}" | sha256sum --check --status
+          tar -xzf "$tarball" actionlint
+
+      - name: actionlint
+        run: ./actionlint -color
+
+  ci-status:
+    name: CI status
+    if: always()
+    needs: [gate, sdks, lint-workflows]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify every job passed
+        env:
+          NEEDS: ${{ toJson(needs) }}
+        run: jq --exit-status 'all(.result == "success" or .result == "skipped")' <<< "$NEEDS"
