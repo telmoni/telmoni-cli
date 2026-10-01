@@ -62,7 +62,7 @@ Telmoni supports two primary authentication modes:
 
 ### Prerequisites
 
-- Rust 1.98.0+ (`rustup`)
+- Rust 1.98.1 (pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
 - Node.js 20+ & npm (for TypeScript SDK)
 - Go 1.22+ (for Go SDK)
 - Python 3.11+ (for Python SDK)
