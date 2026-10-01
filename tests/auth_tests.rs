@@ -1,7 +1,5 @@
 //! Comprehensive unit tests verifying device authorization grant, transport seam,
-//! credentials store, error parser, and team switching logic.
-
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+//! credentials store, error parser, and organization switching logic.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use telmoni_cli::auth::device::{
-    AuthnResult, PollOutcome, Team, poll_once, poll_until_granted, refresh_if_needed,
+    AuthnResult, Organization, PollOutcome, poll_once, poll_until_granted, refresh_if_needed,
 };
 use telmoni_cli::auth::storage::{
-    AuthType, Credentials, CredentialsStore, StoredPerson, StoredTeam,
+    AuthType, Credentials, CredentialsStore, StoredOrganization, StoredPerson,
 };
-use telmoni_cli::commands::{logout, team};
+use telmoni_cli::commands::{logout, org};
 use telmoni_cli::transport::{
     LaneAnswer, LaneRequest, Transport, build_user_agent, parse_lane_error,
 };
@@ -51,7 +49,7 @@ impl MockTransport {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "helper for failure-injection test cases")]
     fn push_error(&self, err: anyhow::Error) {
         if let Ok(mut answers) = self.answers.lock() {
             answers.push_back(Err(err));
@@ -105,7 +103,7 @@ fn test_credentials_round_trip() {
     let store = temp_store();
 
     // Not signed in initially
-    assert!(store.load("default").unwrap().is_none());
+    assert!(store.load().unwrap().is_none());
 
     // Device credentials with some nulls
     let device_creds = Credentials {
@@ -120,25 +118,22 @@ fn test_credentials_round_trip() {
             email: "alice@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_1".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_1".to_string(),
             label: "Acme Corp".to_string(),
             role: "owner".to_string(),
         }],
-        active_team_id: None,
+        active_organization_id: None,
         api_key: None,
         updated_at: 1790000000,
     };
 
-    store.save("default", &device_creds).unwrap();
-    let loaded = store
-        .load("default")
-        .unwrap()
-        .expect("should load credentials");
+    store.save(&device_creds).unwrap();
+    let loaded = store.load().unwrap().expect("should load credentials");
     assert_eq!(loaded, device_creds);
     assert!(loaded.refresh_token.is_none());
     assert!(loaded.session_row_id.is_none());
-    assert!(loaded.active_team_id.is_none());
+    assert!(loaded.active_organization_id.is_none());
     assert!(loaded.api_key.is_none());
 
     // API Key credentials
@@ -150,22 +145,19 @@ fn test_credentials_round_trip() {
         expires_at: None,
         session_row_id: None,
         person: None,
-        teams: Vec::new(),
-        active_team_id: None,
+        organizations: Vec::new(),
+        active_organization_id: None,
         api_key: Some("telmoni_secret_key".to_string()),
         updated_at: 1790000050,
     };
 
-    store.save("default", &api_creds).unwrap();
-    let loaded_api = store
-        .load("default")
-        .unwrap()
-        .expect("should load api credentials");
+    store.save(&api_creds).unwrap();
+    let loaded_api = store.load().unwrap().expect("should load api credentials");
     assert_eq!(loaded_api, api_creds);
 
     // Unparseable file reads as not signed in
     std::fs::write(&store.path, "corrupted { invalid json").unwrap();
-    assert!(store.load("default").unwrap().is_none());
+    assert!(store.load().unwrap().is_none());
 
     // Device file missing access token reads as not signed in
     std::fs::write(
@@ -173,12 +165,12 @@ fn test_credentials_round_trip() {
         r#"{"auth_type":"device","endpoint":"https://telmoni.com","updated_at":100}"#,
     )
     .unwrap();
-    assert!(store.load("default").unwrap().is_none());
+    assert!(store.load().unwrap().is_none());
 
     // Clear deletes the file
-    store.save("default", &api_creds).unwrap();
+    store.save(&api_creds).unwrap();
     assert!(store.path.exists());
-    store.clear("default").unwrap();
+    store.clear().unwrap();
     assert!(!store.path.exists());
 }
 
@@ -555,12 +547,12 @@ async fn test_refresh_if_needed() {
             email: "bob@example.com".to_string(),
             display_name: None,
         }),
-        teams: Vec::new(),
-        active_team_id: None,
+        organizations: Vec::new(),
+        active_organization_id: None,
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
     transport.push_answer(
         200,
@@ -572,19 +564,19 @@ async fn test_refresh_if_needed() {
         }"#,
     );
 
-    refresh_if_needed(&transport, &store, "default", &mut creds)
+    refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
     assert_eq!(creds.access_token.as_deref(), Some("new_at"));
     assert_eq!(creds.refresh_token.as_deref(), Some("new_rt"));
 
-    let loaded = store.load("default").unwrap().unwrap();
+    let loaded = store.load().unwrap().unwrap();
     assert_eq!(loaded.access_token.as_deref(), Some("new_at"));
     assert_eq!(loaded.refresh_token.as_deref(), Some("new_rt"));
 
     // null refreshToken leaving old refresh token in place
     creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
     transport.push_answer(
         200,
@@ -596,7 +588,7 @@ async fn test_refresh_if_needed() {
         }"#,
     );
 
-    refresh_if_needed(&transport, &store, "default", &mut creds)
+    refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
     assert_eq!(creds.access_token.as_deref(), Some("new_at_2"));
@@ -604,67 +596,68 @@ async fn test_refresh_if_needed() {
 
     // 401 clearing the file
     creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
     transport.push_answer(
         401,
         r#"{"type":"/errors/auth/session-ended","title":"session ended","status":401}"#,
     );
 
-    let err = refresh_if_needed(&transport, &store, "default", &mut creds)
+    let err = refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("session ended"));
     assert!(
-        store.load("default").unwrap().is_none(),
+        store.load().unwrap().is_none(),
         "store should be cleared after 401"
     );
 }
 
-// 7. team label: name when present, else owner email, else Team
+// 7. organization label: name when present, else owner email, else Organization
 #[test]
-fn test_team_label_fallback() {
-    let team_with_name = Team {
-        team_id: "team_1".to_string(),
+fn test_organization_label_fallback() {
+    let org_with_name = Organization {
+        organization_id: "org_1".to_string(),
         name: Some("Acme Corp".to_string()),
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
         role: "owner".to_string(),
     };
-    assert_eq!(team_with_name.label(), "Acme Corp");
+    assert_eq!(org_with_name.label(), "Acme Corp");
 
-    let team_with_empty_name = Team {
-        team_id: "team_2".to_string(),
+    let org_with_empty_name = Organization {
+        organization_id: "org_2".to_string(),
         name: Some("   ".to_string()),
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
         role: "admin".to_string(),
     };
-    assert_eq!(team_with_empty_name.label(), "owner@example.com");
+    assert_eq!(org_with_empty_name.label(), "owner@example.com");
 
-    let team_without_name = Team {
-        team_id: "team_3".to_string(),
+    let org_without_name = Organization {
+        organization_id: "org_3".to_string(),
         name: None,
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
         role: "member".to_string(),
     };
-    assert_eq!(team_without_name.label(), "owner@example.com");
+    assert_eq!(org_without_name.label(), "owner@example.com");
 
-    let team_without_owner = Team {
-        team_id: "team_4".to_string(),
+    let org_without_owner = Organization {
+        organization_id: "org_4".to_string(),
         name: None,
         owner_email: None,
         owner_display_name: None,
         role: "member".to_string(),
     };
-    assert_eq!(team_without_owner.label(), "Team");
+    assert_eq!(org_without_owner.label(), "Organization");
 }
 
-// 8. team switch: unknown team rejected without network; active switch verified against /me answer;
-//    mismatch bailing with you are no longer in <id>
+// 8. org switch: unknown organization rejected without network; active switch verified
+//    against /me answer and sent as x-organization-id; mismatch bailing with
+//    you are no longer in <id>
 #[tokio::test]
-async fn test_team_switch_logic() {
+async fn test_org_switch_logic() {
     let store = temp_store();
     let transport = MockTransport::new();
 
@@ -680,40 +673,39 @@ async fn test_team_switch_logic() {
             email: "alice@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![
-            StoredTeam {
-                team_id: "team_1".to_string(),
-                label: "Team One".to_string(),
+        organizations: vec![
+            StoredOrganization {
+                organization_id: "org_1".to_string(),
+                label: "Org One".to_string(),
                 role: "owner".to_string(),
             },
-            StoredTeam {
-                team_id: "team_2".to_string(),
-                label: "Team Two".to_string(),
+            StoredOrganization {
+                organization_id: "org_2".to_string(),
+                label: "Org Two".to_string(),
                 role: "member".to_string(),
             },
         ],
-        active_team_id: Some("team_1".to_string()),
+        active_organization_id: Some("org_1".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
-    // 8a. Unknown team rejected without network
-    let err = team::execute(
-        team::TeamCommand::Switch {
-            team_id: "team_unknown".to_string(),
+    // 8a. Unknown organization rejected without network
+    let err = org::execute(
+        org::OrgCommand::Switch {
+            org_id: "org_unknown".to_string(),
         },
         &transport,
         &store,
-        "default",
     )
     .await
     .unwrap_err();
-    assert!(err.to_string().contains("unknown team team_unknown"));
+    assert!(err.to_string().contains("unknown organization org_unknown"));
     assert_eq!(
         transport.requests.lock().unwrap().len(),
         0,
-        "no network on unknown team"
+        "no network on unknown organization"
     );
 
     // 8b. Active switch verified against /me answer
@@ -724,36 +716,40 @@ async fn test_team_switch_logic() {
                 "userId": "usr_1",
                 "email": "alice@example.com"
             },
-            "teams": [
+            "organizations": [
                 {
-                    "teamId": "team_1",
-                    "name": "Team One",
+                    "organizationId": "org_1",
+                    "name": "Org One",
                     "role": "owner"
                 },
                 {
-                    "teamId": "team_2",
-                    "name": "Team Two",
+                    "organizationId": "org_2",
+                    "name": "Org Two",
                     "role": "member"
                 }
             ],
-            "activeTeamId": "team_2",
+            "activeOrganizationId": "org_2",
             "sessionRowId": "0192a3b4-1111"
         }"#,
     );
 
-    team::execute(
-        team::TeamCommand::Switch {
-            team_id: "team_2".to_string(),
+    org::execute(
+        org::OrgCommand::Switch {
+            org_id: "org_2".to_string(),
         },
         &transport,
         &store,
-        "default",
     )
     .await
     .unwrap();
 
-    let updated = store.load("default").unwrap().unwrap();
-    assert_eq!(updated.active_team_id.as_deref(), Some("team_2"));
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
+    {
+        let reqs = transport.requests.lock().unwrap();
+        assert_eq!(reqs[0].url, "https://telmoni.com/cli/me");
+        assert_eq!(reqs[0].organization.as_deref(), Some("org_2"));
+    }
 
     // 8c. Mismatch bailing with you are no longer in <id>
     transport.push_answer(
@@ -763,30 +759,29 @@ async fn test_team_switch_logic() {
                 "userId": "usr_1",
                 "email": "alice@example.com"
             },
-            "teams": [
+            "organizations": [
                 {
-                    "teamId": "team_1",
-                    "name": "Team One",
+                    "organizationId": "org_1",
+                    "name": "Org One",
                     "role": "owner"
                 }
             ],
-            "activeTeamId": "team_1",
+            "activeOrganizationId": "org_1",
             "sessionRowId": "0192a3b4-1111"
         }"#,
     );
 
-    let mismatch_err = team::execute(
-        team::TeamCommand::Switch {
-            team_id: "team_2".to_string(),
+    let mismatch_err = org::execute(
+        org::OrgCommand::Switch {
+            org_id: "org_2".to_string(),
         },
         &transport,
         &store,
-        "default",
     )
     .await
     .unwrap_err();
 
-    assert_eq!(mismatch_err.to_string(), "you are no longer in team_2");
+    assert_eq!(mismatch_err.to_string(), "you are no longer in org_2");
 }
 
 // 9. logout: deletes the file on a 401 at refresh, and on a 404 at revoke
@@ -808,16 +803,16 @@ async fn test_logout_outcomes() {
             email: "bob@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_1".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_1".to_string(),
             label: "Acme".to_string(),
             role: "owner".to_string(),
         }],
-        active_team_id: Some("team_1".to_string()),
+        active_organization_id: Some("org_1".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds_refresh_401).unwrap();
+    store.save(&creds_refresh_401).unwrap();
     assert!(store.path.exists());
 
     // Refresh answers 401
@@ -826,7 +821,7 @@ async fn test_logout_outcomes() {
         r#"{"type":"/errors/auth/session-ended","title":"session ended","status":401}"#,
     );
 
-    logout::execute(logout::LogoutArgs {}, &transport, &store, "default", None)
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
         .await
         .unwrap();
 
@@ -848,22 +843,22 @@ async fn test_logout_outcomes() {
             email: "bob@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_1".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_1".to_string(),
             label: "Acme".to_string(),
             role: "owner".to_string(),
         }],
-        active_team_id: Some("team_1".to_string()),
+        active_organization_id: Some("org_1".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds_revoke_404).unwrap();
+    store.save(&creds_revoke_404).unwrap();
     assert!(store.path.exists());
 
     // Revoke answers 404
     transport.push_answer(404, r#"{"error":"session not found"}"#);
 
-    logout::execute(logout::LogoutArgs {}, &transport, &store, "default", None)
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
         .await
         .unwrap();
 
@@ -881,8 +876,6 @@ fn test_endpoint_precedence() {
     use telmoni_cli::config::{Config, resolve_endpoint};
 
     let config = Config {
-        active_profile: None,
-        profiles: std::collections::HashMap::new(),
         endpoint: Some("https://from-config.example/".to_string()),
         output_format: None,
     };
@@ -890,21 +883,20 @@ fn test_endpoint_precedence() {
         resolve_endpoint(
             Some("https://flag.example/"),
             Some("https://env.example"),
-            &config,
-            "default"
+            &config
         ),
         "https://flag.example"
     );
     assert_eq!(
-        resolve_endpoint(Some("  "), Some("https://env.example"), &config, "default"),
+        resolve_endpoint(Some("  "), Some("https://env.example"), &config),
         "https://env.example"
     );
     assert_eq!(
-        resolve_endpoint(None, None, &config, "default"),
+        resolve_endpoint(None, None, &config),
         "https://from-config.example"
     );
     assert_eq!(
-        resolve_endpoint(None, Some(""), &Config::default(), "default"),
+        resolve_endpoint(None, Some(""), &Config::default()),
         "https://telmoni.com"
     );
 }
@@ -942,23 +934,22 @@ async fn test_api_key_login_and_status() {
         &store,
         &config,
         None,
-        "default",
     )
     .await
     .unwrap();
 
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
 
-    let creds = store.load("default").unwrap().unwrap();
+    let creds = store.load().unwrap().unwrap();
     assert_eq!(creds.auth_type, AuthType::ApiKey);
     assert_eq!(creds.api_key.as_deref(), Some("telmoni_test_api_key"));
 
-    // Status calls /v1/team
+    // Status calls /v1/organization
     transport.push_answer(
         200,
         r#"{
-            "team_id": "team_api_1",
-            "name": "API Team",
+            "organization_id": "org_api_1",
+            "name": "API Org",
             "owner": { "email": "owner@api.com", "display_name": "API Owner" }
         }"#,
     );
@@ -970,20 +961,19 @@ async fn test_api_key_login_and_status() {
         &config,
         None,
         None,
-        "default",
     )
     .await
     .unwrap();
 
     let reqs = transport.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
-    assert_eq!(reqs[0].url, "https://telmoni.com/v1/team");
+    assert_eq!(reqs[0].url, "https://telmoni.com/v1/organization");
     assert_eq!(reqs[0].bearer.as_deref(), Some("telmoni_test_api_key"));
 }
 
-// 12. TELMONI_TEAM env validation
+// 12. TELMONI_ORG env validation
 #[tokio::test]
-async fn test_telmoni_team_env_validation() {
+async fn test_telmoni_org_env_validation() {
     use telmoni_cli::commands::{logout, status};
     use telmoni_cli::config::Config;
 
@@ -1003,47 +993,45 @@ async fn test_telmoni_team_env_validation() {
             email: "alice@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_allowed".to_string(),
-            label: "Allowed Team".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_allowed".to_string(),
+            label: "Allowed Org".to_string(),
             role: "owner".to_string(),
         }],
-        active_team_id: Some("team_allowed".to_string()),
+        active_organization_id: Some("org_allowed".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
-    // Invalid TELMONI_TEAM on status fails before network
+    // Invalid TELMONI_ORG on status fails before network
     let status_err = status::execute(
         status::StatusArgs { json: false },
         &transport,
         &store,
         &config,
-        Some("team_forbidden".to_string()),
+        Some("org_forbidden".to_string()),
         None,
-        "default",
     )
     .await
     .unwrap_err();
     assert_eq!(
         status_err.to_string(),
-        "TELMONI_TEAM names an team you are not in"
+        "TELMONI_ORG names an organization you are not in"
     );
 
-    // Invalid TELMONI_TEAM on logout fails before network and preserves file
+    // Invalid TELMONI_ORG on logout fails before network and preserves file
     let logout_err = logout::execute(
         logout::LogoutArgs {},
         &transport,
         &store,
-        "default",
-        Some("team_forbidden".to_string()),
+        Some("org_forbidden".to_string()),
     )
     .await
     .unwrap_err();
     assert_eq!(
         logout_err.to_string(),
-        "TELMONI_TEAM names an team you are not in"
+        "TELMONI_ORG names an organization you are not in"
     );
     assert!(store.path.exists());
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
@@ -1071,18 +1059,18 @@ async fn test_status_updates_cached_credentials() {
             email: "alice@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_1".to_string(),
-            label: "Team Old".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_1".to_string(),
+            label: "Org Old".to_string(),
             role: "member".to_string(),
         }],
-        active_team_id: Some("team_1".to_string()),
+        active_organization_id: Some("org_1".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
-    // Server answers with updated display name and newly added team
+    // Server answers with updated display name and newly added organization
     transport.push_answer(
         200,
         r#"{
@@ -1091,19 +1079,19 @@ async fn test_status_updates_cached_credentials() {
                 "email": "alice@example.com",
                 "displayName": "Alice Smith"
             },
-            "teams": [
+            "organizations": [
                 {
-                    "teamId": "team_1",
+                    "organizationId": "org_1",
                     "name": "Acme Corp",
                     "role": "admin"
                 },
                 {
-                    "teamId": "team_2",
+                    "organizationId": "org_2",
                     "name": "Beta Labs",
                     "role": "owner"
                 }
             ],
-            "activeTeamId": "team_2",
+            "activeOrganizationId": "org_2",
             "sessionRowId": "0192a3b4-1111"
         }"#,
     );
@@ -1115,21 +1103,20 @@ async fn test_status_updates_cached_credentials() {
         &config,
         None,
         None,
-        "default",
     )
     .await
     .unwrap();
 
-    let updated = store.load("default").unwrap().unwrap();
+    let updated = store.load().unwrap().unwrap();
     assert_eq!(
         updated.person.unwrap().display_name.as_deref(),
         Some("Alice Smith")
     );
-    assert_eq!(updated.teams.len(), 2);
-    assert_eq!(updated.teams[0].label, "Acme Corp");
-    assert_eq!(updated.teams[0].role, "admin");
-    assert_eq!(updated.teams[1].label, "Beta Labs");
-    assert_eq!(updated.active_team_id.as_deref(), Some("team_2"));
+    assert_eq!(updated.organizations.len(), 2);
+    assert_eq!(updated.organizations[0].label, "Acme Corp");
+    assert_eq!(updated.organizations[0].role, "admin");
+    assert_eq!(updated.organizations[1].label, "Beta Labs");
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
 }
 
 // 14. Status retries on token expired
@@ -1154,16 +1141,16 @@ async fn test_status_retries_on_token_expired() {
             email: "alice@example.com".to_string(),
             display_name: None,
         }),
-        teams: vec![StoredTeam {
-            team_id: "team_1".to_string(),
-            label: "Team One".to_string(),
+        organizations: vec![StoredOrganization {
+            organization_id: "org_1".to_string(),
+            label: "Org One".to_string(),
             role: "owner".to_string(),
         }],
-        active_team_id: Some("team_1".to_string()),
+        active_organization_id: Some("org_1".to_string()),
         api_key: None,
         updated_at: 100,
     };
-    store.save("default", &creds).unwrap();
+    store.save(&creds).unwrap();
 
     // 1. First /cli/me call fails with 401 token-expired
     transport.push_answer(
@@ -1190,14 +1177,14 @@ async fn test_status_retries_on_token_expired() {
                 "userId": "usr_1",
                 "email": "alice@example.com"
             },
-            "teams": [
+            "organizations": [
                 {
-                    "teamId": "team_1",
-                    "name": "Team One",
+                    "organizationId": "org_1",
+                    "name": "Org One",
                     "role": "owner"
                 }
             ],
-            "activeTeamId": "team_1",
+            "activeOrganizationId": "org_1",
             "sessionRowId": "0192a3b4-1111"
         }"#,
     );
@@ -1209,67 +1196,79 @@ async fn test_status_retries_on_token_expired() {
         &config,
         None,
         None,
-        "default",
     )
     .await
     .unwrap();
 
-    let updated = store.load("default").unwrap().unwrap();
+    let updated = store.load().unwrap().unwrap();
     assert_eq!(updated.access_token.as_deref(), Some("fresh_access_token"));
     assert_eq!(updated.refresh_token.as_deref(), Some("new_refresh_token"));
     assert!(store.path.exists());
 }
 
-// 15. Team terminology compatibility: deserializes teams and activeTeamId, falls back to /v1/team on 404
+// 15. Organization wire shape: /cli/me as the platform answers it (extra fields
+//     ignored), and an API key reading /v1/organization
 #[tokio::test]
-async fn test_team_terminology_compatibility() {
+async fn test_organization_wire_shape() {
     use telmoni_cli::auth::device::Me;
-    use telmoni_cli::client::fetch_v1_team;
+    use telmoni_cli::client::fetch_v1_organization;
 
-    // A. Deserializing Me with "teams", "teamId", and "activeTeamId"
-    let json_team_me = r#"{
+    // A. Deserializing Me with "organizations", "organizationId" and "activeOrganizationId"
+    let json_me = r#"{
         "person": {
-            "userId": "usr_team_1",
-            "email": "user@team.test"
+            "userId": "usr_org_1",
+            "email": "user@org.test",
+            "displayName": null,
+            "analyticsOptIn": false
         },
-        "teams": [
+        "organizations": [
             {
-                "teamId": "team_alpha",
-                "name": "Team Alpha",
-                "role": "owner"
+                "organizationId": "org_alpha",
+                "name": "Org Alpha",
+                "ownerEmail": "user@org.test",
+                "ownerDisplayName": null,
+                "role": "owner",
+                "ownershipOfferExpiresAt": null
             }
         ],
-        "activeTeamId": "team_alpha"
+        "deletedOrganizations": [],
+        "activeOrganizationId": "org_alpha",
+        "memberships": [],
+        "incomingInvites": [],
+        "projectOffers": [],
+        "flags": [],
+        "firstLogin": false,
+        "sessionRowId": "0192a3b4-0000-7000-8000-000000000001"
     }"#;
 
-    let me: Me = serde_json::from_str(json_team_me).unwrap();
-    assert_eq!(me.person.user_id, "usr_team_1");
-    assert_eq!(me.teams.len(), 1);
-    assert_eq!(me.teams[0].team_id, "team_alpha");
-    assert_eq!(me.teams[0].label(), "Team Alpha");
-    assert_eq!(me.active_team_id.as_deref(), Some("team_alpha"));
+    let me: Me = serde_json::from_str(json_me).unwrap();
+    assert_eq!(me.person.user_id, "usr_org_1");
+    assert_eq!(me.organizations.len(), 1);
+    assert_eq!(me.organizations[0].organization_id, "org_alpha");
+    assert_eq!(me.organizations[0].label(), "Org Alpha");
+    assert_eq!(me.active_organization_id.as_deref(), Some("org_alpha"));
 
-    // B. fetch_v1_team returns normally
+    // B. fetch_v1_organization reads /v1/organization
     let transport = MockTransport::new();
     transport.push_answer(
         200,
         r#"{
-        "team_id": "team_public",
-        "name": "Public Team",
+        "organization_id": "org_public",
+        "name": "Public Org",
         "owner": {
-            "email": "lead@team.test",
-            "display_name": "Team Lead"
+            "email": "lead@org.test",
+            "display_name": "Org Lead"
         }
     }"#,
     );
 
-    let team = fetch_v1_team(&transport, "https://telmoni.com", "telmoni_api_token")
+    let org = fetch_v1_organization(&transport, "https://telmoni.com", "telmoni_api_token")
         .await
         .unwrap();
-    assert_eq!(team.team_id, "team_public");
-    assert_eq!(team.label(), "Public Team");
+    assert_eq!(org.organization_id, "org_public");
+    assert_eq!(org.label(), "Public Org");
 
     let reqs = transport.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
-    assert_eq!(reqs[0].url, "https://telmoni.com/v1/team");
+    assert_eq!(reqs[0].url, "https://telmoni.com/v1/organization");
 }

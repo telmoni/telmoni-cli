@@ -8,59 +8,19 @@ use serde::{Deserialize, Serialize};
 /// Default Telmoni API endpoint.
 pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://telmoni.com";
 
-/// Reads a key value from a local `.env` file without requiring unsafe environment mutations.
-pub fn read_dotenv_var(key: &str) -> Option<String> {
-    let content = std::fs::read_to_string(".env").ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = trimmed.split_once('=')
-            && k.trim() == key
-        {
-            let mut val = v.trim();
-            if (val.starts_with('"') && val.ends_with('"'))
-                || (val.starts_with('\'') && val.ends_with('\''))
-            {
-                val = &val[1..val.len() - 1];
-            }
-            let val_str = val.trim().to_string();
-            if !val_str.is_empty() {
-                return Some(val_str);
-            }
-        }
-    }
-    None
-}
-
 /// CLI configuration file structure (`~/.config/telmoni/config.json`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub endpoint: Option<String>,
     pub output_format: Option<String>,
-    pub active_profile: Option<String>,
-    #[serde(default)]
-    pub profiles: std::collections::HashMap<String, ProfileConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProfileConfig {
-    pub endpoint: Option<String>,
-    pub output_format: Option<String>,
 }
 
 /// The endpoint a command that holds no stored credentials talks to, in
-/// precedence order: the `--endpoint` flag, then `TELMONI_ENDPOINT` (the
-/// environment, else `.env`, both read by `main` and passed in as
-/// `env_value`), then the config file, then the default. Pure, so it is
-/// testable; the environment is read only at the command entry point.
-pub fn resolve_endpoint(
-    flag: Option<&str>,
-    env_value: Option<&str>,
-    config: &Config,
-    profile: &str,
-) -> String {
+/// precedence order: the `--endpoint` flag, then `TELMONI_ENDPOINT` (read by
+/// `main` and passed in as `env_value`), then the config file, then the
+/// default. Pure, so it is testable; the environment is read only at the
+/// command entry point.
+pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Config) -> String {
     let non_blank = |s: &str| {
         let trimmed = s.trim();
         (!trimmed.is_empty()).then(|| trimmed.trim_end_matches('/').to_string())
@@ -72,31 +32,11 @@ pub fn resolve_endpoint(
         return ep;
     }
 
-    if let Some(pconf) = config.profiles.get(profile)
-        && let Some(ep) = pconf.endpoint.as_deref().and_then(non_blank)
-    {
-        return ep;
-    }
-
-    if profile == "default"
-        && let Some(ep) = config.endpoint.as_deref().and_then(non_blank)
-    {
+    if let Some(ep) = config.endpoint.as_deref().and_then(non_blank) {
         return ep;
     }
 
     DEFAULT_TELMONI_ENDPOINT.to_string()
-}
-
-pub fn active_profile(cli_profile: Option<&str>, config: &Config) -> String {
-    if let Some(p) = cli_profile
-        && !p.trim().is_empty()
-    {
-        return p.trim().to_string();
-    }
-    config
-        .active_profile
-        .clone()
-        .unwrap_or_else(|| "default".to_string())
 }
 
 /// Returns the path to `~/.config/telmoni/config.json`.

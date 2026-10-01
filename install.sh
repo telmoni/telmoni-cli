@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh: `curl -fsSL https://raw.githubusercontent.com/kendricklawton/telmoni/main/install.sh | sh`
+# install.sh: `curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh`
 #
 # Installs the `telmoni` CLI for this host.
 #
@@ -10,8 +10,7 @@
 
 set -eu
 
-# The release repository is not decided yet.
-REPO="${TELMONI_REPO:-kendricklawton/telmoni}"
+REPO="${TELMONI_REPO:-telmoni/telmoni-cli}"
 BIN="telmoni"
 
 DRY_RUN="${TELMONI_INSTALL_DRY_RUN:-}"

@@ -43,7 +43,7 @@ Telmoni supports two primary authentication modes:
   ```console
   telmoni login --key telmoni_xxxxxxxxxxxx
   ```
-- Or set `TELMONI_API_KEY=telmoni_...` directly in the environment or `.env` file.
+- Or set `TELMONI_API_KEY=telmoni_...` in the environment. A debug build (`cargo run`) also reads it from `.env` in the working directory; release builds never read `.env`.
 - API keys communicate with `{endpoint}/v1` and never use `/cli`.
 
 ---

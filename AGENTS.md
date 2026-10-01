@@ -20,7 +20,7 @@ These are the ground rules for modifying this repository. `CLAUDE.md` and
 | `src/auth/` | Authentication implementations: RFC 8628 device flow (`device.rs`) and storage (`storage.rs`). |
 | `src/commands/` | CLI command handlers: `login`, `logout`, `status` (`whoami`), `org`, `config`. |
 | `src/client.rs` | Public `/v1` client operations for static API tokens (`telmoni_...`). |
-| `src/config.rs` | Local configuration loading (`~/.config/telmoni/config.toml` or OS equivalent). |
+| `src/config.rs` | Local configuration loading (`~/.config/telmoni/config.json` or OS equivalent). |
 | `src/transport.rs` | Transport trait, `ReqwestTransport`, error response parser, and User-Agent builder. |
 | `sdk/` | Client SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`). Pure configuration structs with no HTTP calls. |
 | `tests/` | Mock-based unit and integration test suites (`auth_tests.rs`). Zero network, zero sleeps. |
@@ -44,12 +44,12 @@ These are the ground rules for modifying this repository. `CLAUDE.md` and
 - **No Panics:** Zero panics in production code. Clippy denies `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, and `unreachable` at the workspace level. Use `Result` and `Option` with `anyhow` or a typed error. Tests may `unwrap` and `expect`; production code may not.
 - **No Unsafe Code:** `#![forbid(unsafe_code)]` on every crate.
 - **Test Isolation (No Network, No Real Sleeps):** HTTP calls, sleeps, and the clock are injected as closures or a small trait (`Transport`). The credentials path is a value (`CredentialsStore { path }`) so tests write under `std::env::temp_dir()`, never touching the real credentials file.
-- **Environment Variables:** Library code never reads `std::env`; commands read the environment at their entry point and pass values down. (Edition 2024 makes `set_var` unsafe, and unsafe is forbidden, so env-reading library code cannot be tested.)
+- **Environment Variables:** Library code never reads `std::env`; commands read the environment at their entry point and pass values down. (Edition 2024 makes `set_var` unsafe, and unsafe is forbidden, so env-reading library code cannot be tested.) A `.env` in the working directory is read only by `main.rs` in debug builds, for `cargo run` from the repository root; release builds never read it, so a checkout the CLI happens to run in cannot redirect the endpoint or supply an API key.
 - **Output & Logging Hygiene:** Do not write to `stdout` except for the command's own output. `println!` is correct for a CLI; diagnostics go to `stderr` or `tracing`.
 - **Agent Hygiene:** No obvious comments (document *why*, never *what*). No AI signatures in code or commits. Edit files deliberately without bulk script regexes.
 
 ## 🔐 Authentication & Wire Contract
-**The contract is `~/Desktop/telmoni/docs/feature-cli.md`, and it is authoritative.** Read it before touching `src/auth/` or `src/client.rs`. If the platform does not behave as that page says, report the disagreement; the server side is fixed in the platform repository, never worked around here.
+**The contract is the platform's code, and it is authoritative:** the `/cli` door in `~/Desktop/telmoni/web/app/cli/[...path]/route.ts`, the `/me` answer in `~/Desktop/telmoni/crates/auth/src/handler/me.rs`, and the `/v1` lanes in `~/Desktop/telmoni/crates/auth/src/handler/v1.rs`. Read them before touching `src/auth/` or `src/client.rs`. If the platform does not behave as the rules below say, report the disagreement; the server side is fixed in the platform repository, never worked around here.
 
 - **Zero WorkOS Direct Exposure:** The CLI never talks to WorkOS. It holds no WorkOS client id, no WorkOS URL, and no secret. Telmoni handles authentication behind its own `/cli` door, which is the CLI's sole authentication surface.
 - **Interactive Sign-In (RFC 8628 Device Flow):**
@@ -60,7 +60,7 @@ These are the ground rules for modifying this repository. `CLAUDE.md` and
   - Calls `POST /cli/me` upon successful authorization.
 - **No Redirects / No Listener / No PKCE:** There is no loopback redirect, no local listener port, and no PKCE. Do not reintroduce them.
 - **Token Refresh:** Refresh is `POST /cli/auth/refresh` sending `{ refreshToken, sessionRowId }`, never a call to the provider.
-- **Sign-Out & Revocation:** Calls `POST /cli/sessions/{sessionRowId}/revoke` with the active team context (`x-team-id` / `x-team-id`), which the server requires of anyone who belongs to an organization. Then the credentials file is deleted whatever the answer.
+- **Sign-Out & Revocation:** Calls `POST /cli/sessions/{sessionRowId}/revoke` with the active organization context (`x-organization-id`), which the server requires of anyone who belongs to an organization. Then the credentials file is deleted whatever the answer.
 - **Session Termination Invariants (HTTP 401):**
   - A 401 on `/cli/me`, refresh, or revoke means the session was ended (from the web console's Active Sessions page, by account deletion, or by expiry). Delete the credentials file, print "run `telmoni login`", and do not retry.
   - The one exception is an RFC 9457 problem typed `/errors/auth/token-expired`, which a single refresh cures.
@@ -68,19 +68,19 @@ These are the ground rules for modifying this repository. `CLAUDE.md` and
   - A 401 under an API key on `/v1` is `{ "error": … }` and leaves the credentials file alone.
   - A 503 or 5xx server error never deletes credentials.
 - **Nullable Fields as Option:** Every field the server marks nullable is an `Option`: `email`, `firstName`, `lastName`, `refreshToken`, `authMethod`, `displayName`, `ownerEmail`, `ownerDisplayName`, `sessionRowId`, `verificationUriComplete`.
-- **Team Label Resolution:** `name` when non-empty after trimming, else `ownerEmail` when non-null, else the literal `"Team"`.
+- **Organization Label Resolution:** `name` when non-empty after trimming, else `ownerEmail` when non-null, else the literal `"Organization"`.
 - **Error Parser (Three Shapes):**
   - Shape 1: RFC 9457 `application/problem+json` (`{ type, title, status, detail }`) — prints `title: detail`.
   - Shape 2: `{ "error": string }`.
   - Shape 3: Raw fallback `request failed (<status>)` plus the first 200 characters of the body.
   - Never print a token, a refresh token, a device code, or an API key in any error or status message. The user code is the only code displayed.
 - **Standardized User-Agent:** Every request carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)` built from `CARGO_PKG_VERSION`, `std::env::consts::OS`, and `std::env::consts::ARCH`. The server labels the person's session from this string.
-- **Tenant Context Headers:** Dual-dispatched via `x-team-id` and `x-team-id` on every bearer lane, taken from what `/cli/me` answered or what `TELMONI_TEAM` / `TELMONI_TEAM` specifies.
-- **API Keys (`telmoni_…`):** The non-interactive path that opens only `{endpoint}/v1` reads (`/v1/team` or `/v1/team`). They do not go through `/cli`. A key that does not start with `telmoni_` is an error.
+- **Tenant Context Headers:** Dispatched via `x-organization-id` on every bearer lane, taken from what `/cli/me` answered (`activeOrganizationId`) or what `TELMONI_ORG` specifies.
+- **API Keys (`telmoni_…`):** The non-interactive path that opens only `{endpoint}/v1` reads (`/v1/organization`). They do not go through `/cli`. A key that does not start with `telmoni_` is an error.
 - **Local Credentials File:** Stored at `dirs::config_dir()/telmoni/credentials.json` (`~/Library/Application Support/telmoni/` on macOS, `~/.config/telmoni/` on Linux) with mode `0600`. Unencrypted.
 
 ## 🔭 Scope & Boundaries
-- **CLI Commands:** The CLI's commands are strictly `login`, `logout`, `status` (alias `whoami`), `config`, `team list`, and `team switch` (with `team` aliases). A new command that reads or writes customer data needs a lane on the `/cli` door first, which is platform repository work.
+- **CLI Commands:** The CLI's commands are strictly `login`, `logout`, `status` (alias `whoami`), `org` (subcommands `list`, `switch`), and `config`. There are no profiles: one credentials file, one session. A new command that reads or writes customer data needs a lane on the `/cli` door first, which is platform repository work.
 - **SDK Scaffolds (`sdk/`):** Pure configuration structs without HTTP dependencies. They stay that way until their wire contract exists; the only edit they take is the endpoint hostname.
 
 ## 📝 Git Rules (Strict)

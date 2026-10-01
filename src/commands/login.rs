@@ -5,9 +5,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use clap::Args;
 
-use crate::auth::device::{Team, fetch_me, poll_once, poll_until_granted, start_device_auth};
-use crate::auth::storage::{AuthType, Credentials, CredentialsStore, StoredPerson, StoredTeam};
-use crate::config::{Config, read_dotenv_var, resolve_endpoint};
+use crate::auth::device::{
+    Organization, fetch_me, poll_once, poll_until_granted, start_device_auth,
+};
+use crate::auth::storage::{
+    AuthType, Credentials, CredentialsStore, StoredOrganization, StoredPerson,
+};
+use crate::config::{Config, resolve_endpoint};
 use crate::transport::Transport;
 
 /// Arguments for `telmoni login`.
@@ -35,25 +39,18 @@ pub fn validate_api_key(key: &str) -> Result<()> {
 }
 
 /// Executes the `telmoni login` flow. `endpoint_env` is `TELMONI_ENDPOINT`
-/// as `main` read it (environment, else `.env`).
+/// as `main` read it.
 pub async fn execute(
     args: LoginArgs,
     transport: &impl Transport,
     store: &CredentialsStore,
     config: &Config,
     endpoint_env: Option<String>,
-    profile: &str,
 ) -> Result<()> {
-    let endpoint = resolve_endpoint(
-        args.endpoint.as_deref(),
-        endpoint_env.as_deref(),
-        config,
-        profile,
-    );
+    let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config);
 
     // 1. Programmatic API key login
-    let explicit_key = args.key.or_else(|| read_dotenv_var("TELMONI_API_KEY"));
-    if let Some(key) = explicit_key {
+    if let Some(key) = args.key {
         validate_api_key(&key)?;
 
         let creds = Credentials {
@@ -64,13 +61,13 @@ pub async fn execute(
             expires_at: None,
             session_row_id: None,
             person: None,
-            teams: Vec::new(),
-            active_team_id: None,
+            organizations: Vec::new(),
+            active_organization_id: None,
             api_key: Some(key),
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        store.save(profile, &creds)?;
+        store.save(&creds)?;
         println!("Signed in with API key");
         println!("Endpoint: {endpoint}");
         return Ok(());
@@ -103,16 +100,16 @@ pub async fn execute(
     )
     .await?;
 
-    // Fetch user profile and team list
+    // Fetch user profile and organization list
     let me = fetch_me(transport, &endpoint, &authn.access_token, None).await?;
 
-    let stored_teams: Vec<StoredTeam> = me
-        .teams
+    let stored_orgs: Vec<StoredOrganization> = me
+        .organizations
         .iter()
-        .map(|team: &Team| StoredTeam {
-            team_id: team.team_id.clone(),
-            label: team.label().to_string(),
-            role: team.role.clone(),
+        .map(|org: &Organization| StoredOrganization {
+            organization_id: org.organization_id.clone(),
+            label: org.label().to_string(),
+            role: org.role.clone(),
         })
         .collect();
 
@@ -128,26 +125,30 @@ pub async fn execute(
             email: me.person.email.clone(),
             display_name: me.person.display_name,
         }),
-        teams: stored_teams,
-        active_team_id: me.active_team_id.clone(),
+        organizations: stored_orgs,
+        active_organization_id: me.active_organization_id.clone(),
         api_key: None,
         updated_at: chrono::Utc::now().timestamp(),
     };
 
-    store.save(profile, &creds)?;
+    store.save(&creds)?;
 
     println!("Signed in as {}", me.person.email);
-    if let Some(active_id) = &me.active_team_id {
-        if let Some(team) = creds.teams.iter().find(|o| &o.team_id == active_id) {
+    if let Some(active_id) = &me.active_organization_id {
+        if let Some(org) = creds
+            .organizations
+            .iter()
+            .find(|o| &o.organization_id == active_id)
+        {
             println!(
-                "Active team: {} ({}, {})",
-                team.label, team.team_id, team.role
+                "Active organization: {} ({}, {})",
+                org.label, org.organization_id, org.role
             );
         } else {
-            println!("Active team: {active_id}");
+            println!("Active organization: {active_id}");
         }
     } else {
-        println!("No team");
+        println!("No organization");
     }
 
     Ok(())

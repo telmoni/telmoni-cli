@@ -19,7 +19,7 @@ name = "telmoni_cli"
 path = "src/lib.rs"
 
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     ".",
     "xtask",
@@ -30,11 +30,18 @@ default-members = ["."]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.98.0"
+rust-version = "1.98.1"
 license = "Apache-2.0"
 authors = ["Kendrick Lawton"]
-# The release repository is not decided yet.
-repository = "https://github.com/kendricklawton/telmoni"
+repository = "https://github.com/telmoni/telmoni-cli"
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+debug = "line-tables-only"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -62,13 +69,40 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[workspace.lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "deny"
+
 [workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
-todo = "deny"
-unimplemented = "deny"
-unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+
+use_self = "warn"
+manual_let_else = "warn"
+unnested_or_patterns = "warn"
+ignored_unit_patterns = "warn"
+semicolon_if_nothing_returned = "warn"
+elidable_lifetime_names = "warn"
+needless_raw_string_hashes = "warn"
+map_unwrap_or = "warn"
+unused_async = "warn"
+useless_let_if_seq = "warn"
+unnecessary_wraps = "warn"
+match_wildcard_for_single_variants = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+allow_attributes_without_reason = "warn"
+allow_attributes = "warn"
 
 [lints]
 workspace = true

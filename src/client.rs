@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::transport::{LaneRequest, Transport, parse_lane_error};
 
-/// Owner information returned by `/v1/team`.
+/// Owner information returned by `/v1/organization`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct V1Owner {
     /// Owner email.
@@ -14,20 +14,20 @@ pub struct V1Owner {
     pub display_name: Option<String>,
 }
 
-/// Team details returned by `/v1/team`.
+/// Organization details returned by `/v1/organization`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct V1Team {
-    /// Team identifier (`team_...` or `team_...`).
-    pub team_id: String,
-    /// Team name.
+pub struct V1Organization {
+    /// Organization identifier (`org_...`).
+    pub organization_id: String,
+    /// Organization name.
     pub name: Option<String>,
-    /// Team owner details.
+    /// Organization owner details.
     pub owner: Option<V1Owner>,
 }
 
-impl V1Team {
-    /// Returns the resolved label for the team:
-    /// `name` when non-empty after trimming, else `owner.email`, else "Team".
+impl V1Organization {
+    /// Returns the resolved label for the organization:
+    /// `name` when non-empty after trimming, else `owner.email`, else "Organization".
     pub fn label(&self) -> &str {
         if let Some(ref n) = self.name {
             let trimmed = n.trim();
@@ -38,30 +38,30 @@ impl V1Team {
         if let Some(ref o) = self.owner {
             return o.email.as_str();
         }
-        "Team"
+        "Organization"
     }
 }
 
-/// Retrieves team details for a static API key via `GET {endpoint}/v1/team`.
-pub async fn fetch_v1_team(
+/// Retrieves organization details for a static API key via `GET {endpoint}/v1/organization`.
+pub async fn fetch_v1_organization(
     transport: &impl Transport,
     endpoint: &str,
     api_key: &str,
-) -> Result<V1Team> {
-    let url = format!("{}/v1/team", endpoint.trim_end_matches('/'));
+) -> Result<V1Organization> {
+    let url = format!("{}/v1/organization", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
         method: reqwest::Method::GET,
         url,
         bearer: Some(api_key.to_string()),
-        team: None,
+        organization: None,
         json: None,
     };
 
     let answer = transport.send(req).await?;
     if answer.status == 200 {
-        let team: V1Team =
-            serde_json::from_str(&answer.body).context("decoding /v1/team response")?;
-        return Ok(team);
+        let org: V1Organization =
+            serde_json::from_str(&answer.body).context("decoding /v1/organization response")?;
+        return Ok(org);
     }
 
     let lane_err = parse_lane_error(&answer);

@@ -30,7 +30,7 @@ import { Telmoni } from 'telmoni';
 const telmoni = new Telmoni({
   endpoint: 'https://telmoni.com',
   apiKey: process.env.TELMONI_API_KEY,
-  tenantId: 'team_123',
+  tenantId: 'org_123',
 });
 ```
 
@@ -56,7 +56,7 @@ const telmoni = new Telmoni({
 |---|---|
 | `TELMONI_ENDPOINT` / `TELMONI_API_URL` | Telmoni endpoint |
 | `TELMONI_API_KEY` / `TELMONI_AUTH_TOKEN` | Bearer token / API key |
-| `TELMONI_TENANT_ID` / `TELMONI_TEAM_ID` | Default team or tenant ID |
+| `TELMONI_TENANT_ID` / `TELMONI_ORG` | Default organization or tenant ID |
 
 ---
 

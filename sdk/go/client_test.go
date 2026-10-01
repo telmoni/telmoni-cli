@@ -3,7 +3,7 @@ package telmoni_test
 import (
 	"testing"
 
-	telmoni "github.com/kendricklawton/telmoni/sdk/go"
+	telmoni "github.com/telmoni/telmoni-cli/sdk/go"
 )
 
 func TestClientInit(t *testing.T) {

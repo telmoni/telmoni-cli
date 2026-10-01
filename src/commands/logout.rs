@@ -16,44 +16,46 @@ pub async fn execute(
     _args: LogoutArgs,
     transport: &impl Transport,
     store: &CredentialsStore,
-    profile: &str,
-    telmoni_team_env: Option<String>,
+    telmoni_org_env: Option<String>,
 ) -> Result<()> {
-    let mut creds = match store.load(profile)? {
-        Some(c) => c,
-        None => {
-            if store.path.exists() {
-                let _ = store.clear(profile);
-            }
-            println!("Not signed in");
-            return Ok(());
-        }
+    let Some(mut creds) = store.load()? else {
+        let _ = store.clear();
+        println!("Not signed in");
+        return Ok(());
     };
 
     match creds.auth_type {
         AuthType::ApiKey => {
-            let _ = store.clear(profile);
+            let _ = store.clear();
             println!("Signed out");
             Ok(())
         }
         AuthType::Device => {
-            if let Some(ref env_team) = telmoni_team_env
-                && !creds.teams.iter().any(|o| &o.team_id == env_team)
+            if let Some(ref env_org) = telmoni_org_env
+                && !creds
+                    .organizations
+                    .iter()
+                    .any(|o| &o.organization_id == env_org)
             {
-                bail!("TELMONI_TEAM names an team you are not in");
+                bail!("TELMONI_ORG names an organization you are not in");
             }
 
-            // The server requires the header of anyone in an team,
+            // The server requires the header of anyone in an organization,
             // and `/me` names an active one whenever the list is non-empty,
-            // so the stored active team is always the right value.
-            let active_team_for_revoke = if let Some(ref env_team) = telmoni_team_env {
-                Some(env_team.as_str())
+            // so the stored active organization is always the right value.
+            let active_org_for_revoke = if let Some(ref env_org) = telmoni_org_env {
+                Some(env_org.as_str())
             } else {
-                creds.active_team_id.as_deref()
+                creds.active_organization_id.as_deref()
             };
 
-            let team_header = if !creds.teams.is_empty() {
-                active_team_for_revoke.or_else(|| creds.teams.first().map(|o| o.team_id.as_str()))
+            let org_header = if !creds.organizations.is_empty() {
+                active_org_for_revoke.or_else(|| {
+                    creds
+                        .organizations
+                        .first()
+                        .map(|o| o.organization_id.as_str())
+                })
             } else {
                 None
             };
@@ -88,11 +90,10 @@ pub async fn execute(
             if !skip_revoke
                 && let (Some(token), Some(row_id)) = (&creds.access_token, &creds.session_row_id)
             {
-                let _ =
-                    revoke_session(transport, &creds.endpoint, token, row_id, team_header).await;
+                let _ = revoke_session(transport, &creds.endpoint, token, row_id, org_header).await;
             }
 
-            let _ = store.clear(profile);
+            let _ = store.clear();
             println!("Signed out");
             Ok(())
         }

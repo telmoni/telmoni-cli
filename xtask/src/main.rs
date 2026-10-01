@@ -69,12 +69,7 @@ fn ci() -> Result<()> {
 
 /// The absolute path to the repository root.
 pub(crate) fn workspace_root() -> PathBuf {
-    let output = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()))
-        .args(["locate-project", "--workspace", "--message-format=plain"])
-        .output()
-        .unwrap_or_else(|_| std::process::exit(1));
-    let stdout = String::from_utf8(output.stdout).unwrap_or_else(|_| std::process::exit(1));
-    Path::new(stdout.trim())
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| std::process::exit(1))
         .to_path_buf()
@@ -109,13 +104,13 @@ pub(crate) fn cargo_env(args: &[&str], envs: &[(&str, &str)]) -> Result<()> {
 fn toolchain_msrv_agree(root: &Path) -> Result<()> {
     let manifest_msrv = std::fs::read_to_string(root.join("Cargo.toml"))?
         .lines()
-        .find(|l| l.starts_with("rust-version = "))
+        .find(|l| l.contains("rust-version") && l.contains('"'))
         .and_then(|l| l.split('"').nth(1))
         .map(String::from)
         .context("no rust-version in Cargo.toml")?;
     let toolchain_ch = std::fs::read_to_string(root.join("rust-toolchain.toml"))?
         .lines()
-        .find(|l| l.starts_with("channel = "))
+        .find(|l| l.contains("channel") && l.contains('"'))
         .and_then(|l| l.split('"').nth(1))
         .map(String::from)
         .context("no channel in rust-toolchain.toml")?;

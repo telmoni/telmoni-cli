@@ -34,8 +34,8 @@ body:
     attributes:
       label: Which area does your question relate to?
       options:
-        - Authentication (device-code login, login, API keys)
-        - CLI usage (telmoni config, status)
+        - Authentication (telmoni login / logout, device-code login, API keys)
+        - CLI usage (telmoni status / whoami, telmoni org, telmoni config)
         - Rust SDK (telmoni-sdk)
         - TypeScript SDK (telmoni)
         - Go SDK

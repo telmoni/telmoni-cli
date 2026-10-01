@@ -1,6 +1,6 @@
 # Telmoni CLI & Multi-Language SDKs
 
-[![CI](https://github.com/kendricklawton/telmoni/actions/workflows/ci.yml/badge.svg)](https://github.com/kendricklawton/telmoni/actions/workflows/ci.yml)
+[![CI](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 The official command-line interface (`telmoni`) and client SDKs for Telmoni.
@@ -12,20 +12,20 @@ The official command-line interface (`telmoni`) and client SDKs for Telmoni.
 ### Shell Installer (macOS & Linux)
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/kendricklawton/telmoni/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh
 ```
 
 Pin a specific release or override the install directory:
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/kendricklawton/telmoni/main/install.sh | TELMONI_VERSION=0.0.1 sh
+curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | TELMONI_VERSION=0.0.1 sh
 ```
 
 ### From Source (Rust toolchain required)
 
 ```console
-git clone https://github.com/kendricklawton/telmoni.git
-cd telmoni
+git clone https://github.com/telmoni/telmoni-cli.git
+cd telmoni-cli
 cargo install --path . --locked
 ```
 
@@ -154,7 +154,7 @@ All SDKs provide idiomatic clients for communicating with the Telmoni platform.
 | Language | Directory | Package / Module |
 |---|---|---|
 | **TypeScript / JS** | [`sdk/typescript`](sdk/typescript/) | `telmoni` (npm) |
-| **Go** | [`sdk/go`](sdk/go/) | `github.com/kendricklawton/telmoni/sdk/go` |
+| **Go** | [`sdk/go`](sdk/go/) | `github.com/telmoni/telmoni-cli/sdk/go` |
 | **Python** | [`sdk/python`](sdk/python/) | `telmoni` (PyPI) |
 | **Rust** | [`sdk/rust`](sdk/rust/) | `telmoni-sdk` (crates.io) |
 

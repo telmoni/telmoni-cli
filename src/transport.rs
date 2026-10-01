@@ -13,8 +13,8 @@ pub struct LaneRequest {
     pub url: String,
     /// Bearer token for `Authorization: Bearer <token>`.
     pub bearer: Option<String>,
-    /// Team context for `x-team-id: <team>`.
-    pub team: Option<String>,
+    /// Organization context for `x-organization-id: <org>`.
+    pub organization: Option<String>,
     /// JSON payload, if any.
     pub json: Option<serde_json::Value>,
 }
@@ -153,8 +153,8 @@ impl Transport for ReqwestTransport {
         if let Some(token) = req.bearer {
             builder = builder.header("Authorization", format!("Bearer {token}"));
         }
-        if let Some(team) = req.team {
-            builder = builder.header("x-team-id", &team);
+        if let Some(org) = req.organization {
+            builder = builder.header("x-organization-id", &org);
         }
         if let Some(json_val) = req.json {
             builder = builder.json(&json_val);

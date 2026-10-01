@@ -4,10 +4,10 @@
   "description": "Official TypeScript & JavaScript SDK for the Telmoni platform",
   "license": "Apache-2.0",
   "author": "Kendrick Lawton",
-  "homepage": "https://github.com/kendricklawton/telmoni",
+  "homepage": "https://github.com/telmoni/telmoni-cli",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kendricklawton/telmoni.git",
+    "url": "git+https://github.com/telmoni/telmoni-cli.git",
     "directory": "sdk/typescript"
   },
   "keywords": [

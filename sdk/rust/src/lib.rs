@@ -12,7 +12,7 @@ pub const DEFAULT_ENDPOINT: &str = "https://telmoni.com";
 pub struct Config {
     /// Telmoni API endpoint URL (default: `https://telmoni.com`).
     pub endpoint: String,
-    /// Tenant or Team ID.
+    /// Tenant or organization ID.
     pub tenant_id: Option<String>,
     /// Authentication token or API key (`TELMONI_API_KEY`).
     pub auth_token: Option<String>,

@@ -13,7 +13,7 @@ export interface Config {
   apiKey?: string | undefined;
 
   /**
-   * Tenant or team identifier.
+   * Tenant or organization identifier.
    */
   tenantId?: string | undefined;
 }

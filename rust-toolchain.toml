@@ -1,11 +1,4 @@
-# Pin the whole workspace to an exact stable Rust so a local build and CI run the identical compiler
-# and clippy: a lint that passes locally can then never surprise CI. Floating `channel = "stable"`
-# only holds that if every dev's installed stable is current; a stale local stable can pass a lint
-# a newer CI stable rejects. Bump this deliberately when moving
-# to a newer Rust, and keep `rust-version` in Cargo.toml in step (that is the downstream MSRV floor;
-# the policy tracks current stable, with no back-support of older toolchains yet).
-# No nightly here, so no
-# `targets` entry is needed.
 [toolchain]
-channel = "1.98.0"
+channel = "1.98.1"
 components = ["rustfmt", "clippy"]
+profile = "minimal"

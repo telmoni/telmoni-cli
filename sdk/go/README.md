@@ -5,7 +5,7 @@ The official Go SDK for the **Telmoni** platform.
 ## Installation
 
 ```console
-go get github.com/kendricklawton/telmoni/sdk/go
+go get github.com/telmoni/telmoni-cli/sdk/go
 ```
 
 ## Quick Start
@@ -14,7 +14,7 @@ go get github.com/kendricklawton/telmoni/sdk/go
 package main
 
 import (
-	telmoni "github.com/kendricklawton/telmoni/sdk/go"
+	telmoni "github.com/telmoni/telmoni-cli/sdk/go"
 )
 
 func main() {

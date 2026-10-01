@@ -35,7 +35,8 @@ body:
       label: Which surface does it touch?
       options:
         - CLI (new command or flags)
-        - Auth (device-code login / authentication)
+        - Auth (telmoni login / logout, device-code login, API keys)
+        - Session & organizations (telmoni status / whoami, telmoni org)
         - Config (telmoni config)
         - SDKs (TypeScript, Go, Python, Rust)
         - Docs / Tooling

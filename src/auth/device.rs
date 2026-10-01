@@ -67,13 +67,13 @@ pub struct Person {
     pub analytics_opt_in: bool,
 }
 
-/// Team membership details returned by `/cli/me`.
+/// Organization membership details returned by `/cli/me`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Team {
-    /// Team ID.
-    pub team_id: String,
-    /// Team name.
+pub struct Organization {
+    /// Organization ID (`org_...`).
+    pub organization_id: String,
+    /// Organization name.
     pub name: Option<String>,
     /// Owner email address.
     pub owner_email: Option<String>,
@@ -83,9 +83,9 @@ pub struct Team {
     pub role: String,
 }
 
-impl Team {
-    /// Computes the team label:
-    /// `name` when non-empty after trimming, else `owner_email` when non-null, else "Team".
+impl Organization {
+    /// Computes the organization label:
+    /// `name` when non-empty after trimming, else `owner_email` when non-null, else "Organization".
     pub fn label(&self) -> &str {
         if let Some(ref n) = self.name {
             let trimmed = n.trim();
@@ -96,7 +96,7 @@ impl Team {
         if let Some(ref email) = self.owner_email {
             return email.as_str();
         }
-        "Team"
+        "Organization"
     }
 }
 
@@ -106,12 +106,12 @@ impl Team {
 pub struct Me {
     /// Person identity.
     pub person: Person,
-    /// Teams list.
+    /// Organizations the person belongs to.
     #[serde(default)]
-    pub teams: Vec<Team>,
-    /// Active team ID.
+    pub organizations: Vec<Organization>,
+    /// Active organization ID.
     #[serde(default)]
-    pub active_team_id: Option<String>,
+    pub active_organization_id: Option<String>,
     /// Session row ID for Active Sessions tracking.
     pub session_row_id: Option<String>,
     /// Whether this is the person's first login.
@@ -144,7 +144,7 @@ pub async fn start_device_auth(transport: &impl Transport, endpoint: &str) -> Re
         method: reqwest::Method::POST,
         url,
         bearer: None,
-        team: None,
+        organization: None,
         json: None,
     };
 
@@ -170,7 +170,7 @@ pub async fn poll_once(
         method: reqwest::Method::POST,
         url,
         bearer: None,
-        team: None,
+        organization: None,
         json: Some(serde_json::json!({ "deviceCode": device_code })),
     };
 
@@ -244,9 +244,7 @@ where
                 current_interval += Duration::from_secs(5);
             }
             PollOutcome::RateLimited { retry_after_secs } => {
-                let dur = retry_after_secs
-                    .map(Duration::from_secs)
-                    .unwrap_or(current_interval);
+                let dur = retry_after_secs.map_or(current_interval, Duration::from_secs);
                 next_sleep = Some(dur);
             }
             PollOutcome::Failed(msg) => bail!("{msg}"),
@@ -254,19 +252,19 @@ where
     }
 }
 
-/// Calls `POST {endpoint}/cli/me` to retrieve session identity and teams.
+/// Calls `POST {endpoint}/cli/me` to retrieve session identity and organizations.
 pub async fn fetch_me(
     transport: &impl Transport,
     endpoint: &str,
     access_token: &str,
-    team_id: Option<&str>,
+    organization_id: Option<&str>,
 ) -> Result<Me> {
     let url = format!("{}/cli/me", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
         method: reqwest::Method::POST,
         url,
         bearer: Some(access_token.to_string()),
-        team: team_id.map(ToString::to_string),
+        organization: organization_id.map(ToString::to_string),
         json: None,
     };
 
@@ -304,7 +302,7 @@ pub async fn refresh_tokens(
         method: reqwest::Method::POST,
         url,
         bearer: None,
-        team: None,
+        organization: None,
         json: Some(serde_json::Value::Object(body_map)),
     };
 
@@ -323,7 +321,6 @@ pub async fn refresh_tokens(
 pub async fn refresh_if_needed(
     transport: &impl Transport,
     store: &CredentialsStore,
-    profile: &str,
     creds: &mut Credentials,
 ) -> Result<()> {
     if creds.auth_type != crate::auth::storage::AuthType::Device {
@@ -340,7 +337,7 @@ pub async fn refresh_if_needed(
     let rt = match creds.refresh_token.as_ref() {
         Some(rt) => rt.clone(),
         None => {
-            let _ = store.clear(profile);
+            let _ = store.clear();
             bail!("session ended; run telmoni login");
         }
     };
@@ -361,13 +358,13 @@ pub async fn refresh_if_needed(
             }
             creds.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
             creds.updated_at = chrono::Utc::now().timestamp();
-            store.save(profile, creds)?;
+            store.save(creds)?;
             Ok(())
         }
         Err(err) => {
             if let Some(lane_err) = err.downcast_ref::<LaneError>() {
                 if lane_err.status == 401 {
-                    let _ = store.clear(profile);
+                    let _ = store.clear();
                     bail!("session ended; run telmoni login");
                 }
                 bail!("{}", lane_err.message);
@@ -383,7 +380,7 @@ pub async fn revoke_session(
     endpoint: &str,
     access_token: &str,
     session_row_id: &str,
-    team_id: Option<&str>,
+    organization_id: Option<&str>,
 ) -> Result<()> {
     let url = format!(
         "{}/cli/sessions/{}/revoke",
@@ -394,7 +391,7 @@ pub async fn revoke_session(
         method: reqwest::Method::POST,
         url,
         bearer: Some(access_token.to_string()),
-        team: team_id.map(ToString::to_string),
+        organization: organization_id.map(ToString::to_string),
         json: None,
     };
 

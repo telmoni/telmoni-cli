@@ -26,14 +26,14 @@ pub struct StoredPerson {
     pub display_name: Option<String>,
 }
 
-/// Team summary stored in credentials.
+/// Organization summary stored in credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StoredTeam {
-    /// Team ID (`team_...`).
-    pub team_id: String,
-    /// Team human-readable label.
+pub struct StoredOrganization {
+    /// Organization ID (`org_...`).
+    pub organization_id: String,
+    /// Organization human-readable label.
     pub label: String,
-    /// User's role in the team (`owner`, `admin`, `member`).
+    /// User's role in the organization (`owner`, `admin`, `member`).
     pub role: String,
 }
 
@@ -54,11 +54,11 @@ pub struct Credentials {
     pub session_row_id: Option<String>,
     /// Person information.
     pub person: Option<StoredPerson>,
-    /// Teams the person belongs to.
+    /// Organizations the person belongs to.
     #[serde(default)]
-    pub teams: Vec<StoredTeam>,
-    /// ID of the active team context.
-    pub active_team_id: Option<String>,
+    pub organizations: Vec<StoredOrganization>,
+    /// ID of the active organization context.
+    pub active_organization_id: Option<String>,
     /// Static API key (set for `ApiKey`).
     pub api_key: Option<String>,
     /// Last updated timestamp in Unix seconds.
@@ -66,12 +66,6 @@ pub struct Credentials {
 }
 
 /// Store for managing credentials persistence on disk.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CredentialsFile {
-    #[serde(flatten)]
-    pub profiles: std::collections::HashMap<String, Credentials>,
-}
-
 #[derive(Debug, Clone)]
 pub struct CredentialsStore {
     /// Path to credentials file.
@@ -84,63 +78,17 @@ impl CredentialsStore {
         Self { path }
     }
 
-    fn load_file(&self) -> Result<CredentialsFile> {
-        let path = &self.path;
-        if !path.exists() {
-            return Ok(CredentialsFile {
-                profiles: std::collections::HashMap::new(),
-            });
+    /// Loads the saved credentials, if any. A missing, unreadable or
+    /// unparseable file reads as not signed in.
+    pub fn load(&self) -> Result<Option<Credentials>> {
+        if !self.path.exists() {
+            return Ok(None);
         }
-        let content = std::fs::read_to_string(path)?;
-        if let Ok(file) = serde_json::from_str::<CredentialsFile>(&content) {
-            return Ok(file);
-        }
-        // Fallback for v1 credentials.json
-        if let Ok(creds) = serde_json::from_str::<Credentials>(&content) {
-            let mut profiles = std::collections::HashMap::new();
-            profiles.insert("default".to_string(), creds);
-            let file = CredentialsFile { profiles };
-            let _ = self.save_file(&file); // auto migrate
-            return Ok(file);
-        }
-        Ok(CredentialsFile {
-            profiles: std::collections::HashMap::new(),
-        })
-    }
-
-    fn save_file(&self, file: &CredentialsFile) -> Result<()> {
-        let path = &self.path;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
-
-        let json = serde_json::to_string_pretty(file).context("serializing credentials file")?;
-        std::fs::write(path, json)
-            .with_context(|| format!("writing credentials to {}", path.display()))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(path)
-                .context("reading metadata of credentials file")?
-                .permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(path, perms)
-                .context("setting permissions on credentials file")?;
-        }
-        Ok(())
-    }
-
-    /// Loads the saved credentials for a profile, if any.
-    pub fn load(&self, profile: &str) -> Result<Option<Credentials>> {
-        let file = match self.load_file() {
-            Ok(f) => f,
-            Err(_) => return Ok(None),
+        let Ok(content) = std::fs::read_to_string(&self.path) else {
+            return Ok(None);
         };
-        let creds = match file.profiles.get(profile) {
-            Some(c) => c.clone(),
-            None => return Ok(None),
+        let Ok(creds) = serde_json::from_str::<Credentials>(&content) else {
+            return Ok(None);
         };
 
         match creds.auth_type {
@@ -162,24 +110,36 @@ impl CredentialsStore {
         Ok(Some(creds))
     }
 
-    /// Saves the credentials to disk for a profile.
-    pub fn save(&self, profile: &str, creds: &Credentials) -> Result<()> {
-        let mut file = self.load_file()?;
-        file.profiles.insert(profile.to_string(), creds.clone());
-        self.save_file(&file)
+    /// Saves the credentials to disk.
+    pub fn save(&self, creds: &Credentials) -> Result<()> {
+        let path = &self.path;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating directory {}", parent.display()))?;
+        }
+
+        let json = serde_json::to_string_pretty(creds).context("serializing credentials")?;
+        std::fs::write(path, json)
+            .with_context(|| format!("writing credentials to {}", path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path)
+                .context("reading metadata of credentials file")?
+                .permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(path, perms)
+                .context("setting permissions on credentials file")?;
+        }
+        Ok(())
     }
 
-    /// Clears the saved credentials for a profile.
-    pub fn clear(&self, profile: &str) -> Result<()> {
-        let mut file = self.load_file()?;
-        file.profiles.remove(profile);
-        if file.profiles.is_empty() {
-            if self.path.exists() {
-                std::fs::remove_file(&self.path).ok();
-            }
-            Ok(())
-        } else {
-            self.save_file(&file)
+    /// Deletes the credentials file.
+    pub fn clear(&self) -> Result<()> {
+        if self.path.exists() {
+            std::fs::remove_file(&self.path).ok();
         }
+        Ok(())
     }
 }
