@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use clap::Args;
 
-use crate::auth::device::{refresh_tokens, revoke_session};
+use crate::auth::device::{fetch_me, refresh_tokens, revoke_session};
 use crate::auth::storage::{AuthType, CredentialsStore};
 use crate::transport::{LaneError, Transport};
 
@@ -90,7 +90,33 @@ pub async fn execute(
             if !skip_revoke
                 && let (Some(token), Some(row_id)) = (&creds.access_token, &creds.session_row_id)
             {
-                let _ = revoke_session(transport, &creds.endpoint, token, row_id, org_header).await;
+                let mut ended =
+                    revoke_session(transport, &creds.endpoint, token, row_id, org_header).await;
+                // The cached organization list can be stale, and the server
+                // refuses a revoke that names an organization the person has
+                // left (403) or names none while they belong to one (400).
+                // `/me` says which one to name now.
+                if lane_status(&ended).is_some_and(|s| s == 400 || s == 403)
+                    && let Ok(me) = fetch_me(transport, &creds.endpoint, token, None).await
+                {
+                    ended = revoke_session(
+                        transport,
+                        &creds.endpoint,
+                        token,
+                        row_id,
+                        me.active_organization_id.as_deref(),
+                    )
+                    .await;
+                }
+                // A 401 means the session was already ended elsewhere.
+                if lane_status(&ended) != Some(401)
+                    && let Err(err) = ended
+                {
+                    eprintln!(
+                        "note: the server did not confirm the sign-out ({err}); \
+                         end the session from Active sessions in the console"
+                    );
+                }
             }
 
             let _ = store.clear();
@@ -98,4 +124,11 @@ pub async fn execute(
             Ok(())
         }
     }
+}
+
+fn lane_status(res: &Result<()>) -> Option<u16> {
+    res.as_ref()
+        .err()?
+        .downcast_ref::<LaneError>()
+        .map(|e| e.status)
 }

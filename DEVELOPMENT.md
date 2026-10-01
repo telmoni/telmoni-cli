@@ -9,9 +9,9 @@ This document describes the internal architecture of the Telmoni CLI and multi-l
 Telmoni CLI is designed as an ergonomic, host-safe command-line tool written in modern Rust, backed by a unified workspace managing:
 
 1. **`telmoni-cli` (`src/`)**: The main CLI binary and library.
-2. **`telmoni-sdk` (`sdk/rust/`)**: The official Rust SDK client.
+2. **`telmoni-sdk` (`sdk/rust/`)**: The Rust SDK scaffold.
 3. **`xtask` (`xtask/`)**: Dev orchestration tooling (CI gate, release packaging, distribution).
-4. **Client SDKs (`sdk/`)**: Idiomatic SDKs for TypeScript, Go, Python, and Rust.
+4. **Client SDKs (`sdk/`)**: Scaffolds for TypeScript, Go, Python, and Rust: configuration (endpoint, API key, organization) and no HTTP until each one's contract exists.
 
 ---
 
@@ -63,9 +63,9 @@ Telmoni supports two primary authentication modes:
 ### Prerequisites
 
 - Rust 1.98.1 (pinned in `rust-toolchain.toml`; `rustup` installs it automatically)
-- Node.js 20+ & npm (for TypeScript SDK)
+- Node.js 18+ & npm (for TypeScript SDK)
 - Go 1.22+ (for Go SDK)
-- Python 3.11+ (for Python SDK)
+- Python 3.9+ (for Python SDK)
 - `cargo-deny` (`cargo install cargo-deny`)
 
 ### Running the CI Gate

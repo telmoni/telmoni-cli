@@ -111,26 +111,64 @@ impl CredentialsStore {
     }
 
     /// Saves the credentials to disk.
+    ///
+    /// ⚠ The tokens never sit in a file anyone else can read, not even for a
+    /// moment: they go to a sibling created `0600` from the start, which is
+    /// then renamed over the old file. The rename also means a crash mid-write
+    /// leaves the previous file whole rather than a torn one that reads as
+    /// signed out, and replaces whatever mode an older file had.
     pub fn save(&self, creds: &Credentials) -> Result<()> {
         let path = &self.path;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        // Only directories created here are made private; one that already
+        // exists (the system temp directory, a config root) is not ours to
+        // tighten.
+        let mut dirs = std::fs::DirBuilder::new();
+        dirs.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut dirs, 0o700);
+        dirs.create(parent)
+            .with_context(|| format!("creating directory {}", parent.display()))?;
 
         let json = serde_json::to_string_pretty(creds).context("serializing credentials")?;
-        std::fs::write(path, json)
-            .with_context(|| format!("writing credentials to {}", path.display()))?;
 
+        let file_name = path
+            .file_name()
+            .context("credentials path has no file name")?
+            .to_string_lossy();
+        let tmp = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+        // A sibling left by a crashed run of this same process id would make
+        // `create_new` fail; it holds nothing worth keeping.
+        let _ = std::fs::remove_file(&tmp);
+
+        let written = (|| -> Result<()> {
+            use std::io::Write;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options
+                .open(&tmp)
+                .with_context(|| format!("creating {}", tmp.display()))?;
+            file.write_all(json.as_bytes())
+                .with_context(|| format!("writing {}", tmp.display()))?;
+            file.sync_all()
+                .with_context(|| format!("flushing {}", tmp.display()))?;
+            std::fs::rename(&tmp, path)
+                .with_context(|| format!("writing credentials to {}", path.display()))
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return written;
+        }
+
+        // The rename is durable only once the directory entry is on disk.
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(path)
-                .context("reading metadata of credentials file")?
-                .permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(path, perms)
-                .context("setting permissions on credentials file")?;
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
         }
         Ok(())
     }

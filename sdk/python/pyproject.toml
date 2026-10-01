@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "telmoni"
 version = "0.1.0"
-description = "The official Python SDK for the Telmoni platform"
+description = "Python SDK scaffold for the Telmoni platform"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }

@@ -1,20 +1,23 @@
 # Telmoni TypeScript / JavaScript SDK
 
-The official client SDK for interacting with the Telmoni platform.
+A scaffold: configuration (endpoint, API key, organization) and nothing that
+calls the platform yet. It grows a client once its contract exists.
 
 ---
 
 ## Installation
 
+Not published yet. Build it from a checkout of this repository:
+
 ```console
-npm install telmoni
+cd sdk/typescript && npm ci && npm run build
 ```
 
 ---
 
 ## Quickstart
 
-### 1. Default Client (Environment Variables)
+### 1. From Environment Variables
 
 ```ts
 import { Telmoni } from 'telmoni';
@@ -30,15 +33,13 @@ import { Telmoni } from 'telmoni';
 const telmoni = new Telmoni({
   endpoint: 'https://telmoni.com',
   apiKey: process.env.TELMONI_API_KEY,
-  tenantId: 'org_123',
+  organizationId: 'org_123',
 });
 ```
 
 ---
 
 ## JavaScript (CommonJS) Usage
-
-Fully compatible with standard Node.js CommonJS:
 
 ```js
 const { Telmoni } = require('telmoni');
@@ -55,8 +56,8 @@ const telmoni = new Telmoni({
 | Variable | Description |
 |---|---|
 | `TELMONI_ENDPOINT` / `TELMONI_API_URL` | Telmoni endpoint |
-| `TELMONI_API_KEY` / `TELMONI_AUTH_TOKEN` | Bearer token / API key |
-| `TELMONI_TENANT_ID` / `TELMONI_ORG` | Default organization or tenant ID |
+| `TELMONI_API_KEY` / `TELMONI_AUTH_TOKEN` | API key |
+| `TELMONI_ORG` | Default organization ID |
 
 ---
 

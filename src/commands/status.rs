@@ -4,11 +4,11 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde_json::json;
 
-use crate::auth::device::{fetch_me, refresh_if_needed, refresh_tokens};
+use crate::auth::device::{fetch_me_for_session, refresh_if_needed};
 use crate::auth::storage::{AuthType, CredentialsStore, StoredOrganization, StoredPerson};
 use crate::client::fetch_v1_organization;
 use crate::config::Config;
-use crate::transport::{LaneError, Transport};
+use crate::transport::Transport;
 
 /// Arguments for `telmoni status` and `telmoni whoami`.
 #[derive(Debug, Args)]
@@ -76,77 +76,8 @@ pub async fn execute(
             // Refresh first if access token is within 60 seconds of expiry
             refresh_if_needed(transport, store, &mut creds).await?;
 
-            let access_token = creds
-                .access_token
-                .as_deref()
-                .context("missing access token")?;
-
-            // Fetch /cli/me with token expired retry handling
-            let me_res = fetch_me(
-                transport,
-                &creds.endpoint,
-                access_token,
-                active_org_id.as_deref(),
-            )
-            .await;
-
-            let me = match me_res {
-                Ok(m) => m,
-                Err(err) => {
-                    if let Some(lane_err) = err.downcast_ref::<LaneError>() {
-                        if lane_err.status == 401 {
-                            if lane_err.problem_type.as_deref()
-                                == Some("/errors/auth/token-expired")
-                            {
-                                // Refresh once and retry once
-                                let rt = creds
-                                    .refresh_token
-                                    .as_ref()
-                                    .context("missing refresh token")?;
-                                let authn = refresh_tokens(
-                                    transport,
-                                    &creds.endpoint,
-                                    rt,
-                                    creds.session_row_id.as_deref(),
-                                )
-                                .await
-                                .map_err(|_e| {
-                                    let _ = store.clear();
-                                    anyhow::anyhow!("session ended; run telmoni login")
-                                })?;
-
-                                creds.access_token = Some(authn.access_token.clone());
-                                if let Some(new_rt) = authn.refresh_token {
-                                    creds.refresh_token = Some(new_rt);
-                                }
-                                creds.expires_at =
-                                    Some(chrono::Utc::now().timestamp() + authn.expires_in);
-                                creds.updated_at = chrono::Utc::now().timestamp();
-                                store.save(&creds)?;
-
-                                fetch_me(
-                                    transport,
-                                    &creds.endpoint,
-                                    &authn.access_token,
-                                    active_org_id.as_deref(),
-                                )
-                                .await
-                                .map_err(|_| {
-                                    let _ = store.clear();
-                                    anyhow::anyhow!("session ended; run telmoni login")
-                                })?
-                            } else {
-                                let _ = store.clear();
-                                bail!("session ended; run telmoni login");
-                            }
-                        } else {
-                            bail!("{}", lane_err.message);
-                        }
-                    } else {
-                        return Err(err);
-                    }
-                }
-            };
+            let me = fetch_me_for_session(transport, store, &mut creds, active_org_id.as_deref())
+                .await?;
 
             creds.person = Some(StoredPerson {
                 user_id: me.person.user_id,
@@ -170,6 +101,14 @@ pub async fn execute(
             }
             creds.updated_at = chrono::Utc::now().timestamp();
             let _ = store.save(&creds);
+
+            // `/me` acts in the oldest organization when the one asked for is
+            // no longer the person's, so the cached list's say-so is not enough.
+            if let Some(env_org) = telmoni_org_env.as_deref()
+                && me.active_organization_id.as_deref() != Some(env_org)
+            {
+                bail!("you are no longer in {env_org}");
+            }
 
             let effective_active_org_id = if telmoni_org_env.is_some() {
                 active_org_id

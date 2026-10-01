@@ -1,4 +1,4 @@
-//! The official Rust SDK for the Telmoni platform.
+//! The Rust SDK scaffold for the Telmoni platform: configuration only, no HTTP yet.
 
 #![warn(missing_docs)]
 
@@ -12,8 +12,8 @@ pub const DEFAULT_ENDPOINT: &str = "https://telmoni.com";
 pub struct Config {
     /// Telmoni API endpoint URL (default: `https://telmoni.com`).
     pub endpoint: String,
-    /// Tenant or organization ID.
-    pub tenant_id: Option<String>,
+    /// Organization ID (`org_…`).
+    pub organization_id: Option<String>,
     /// Authentication token or API key (`TELMONI_API_KEY`).
     pub auth_token: Option<String>,
 }
@@ -22,30 +22,30 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             endpoint: DEFAULT_ENDPOINT.to_string(),
-            tenant_id: None,
+            organization_id: None,
             auth_token: None,
         }
     }
 }
 
 impl Config {
-    /// Constructs a new configuration with custom endpoint and tenant.
+    /// Constructs a new configuration with custom endpoint and organization.
     #[must_use]
     pub fn new(
         endpoint: impl Into<String>,
-        tenant_id: Option<String>,
+        organization_id: Option<String>,
         auth_token: Option<String>,
     ) -> Self {
         Self {
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
-            tenant_id,
+            organization_id,
             auth_token,
         }
     }
 
     /// Loads configuration from standard environment variables:
     /// - `TELMONI_ENDPOINT` (or defaults to `https://telmoni.com`)
-    /// - `TELMONI_TENANT_ID`
+    /// - `TELMONI_ORG`
     /// - `TELMONI_API_KEY`
     #[must_use]
     pub fn from_env() -> Self {
@@ -54,18 +54,18 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
-        let tenant_id = std::env::var("TELMONI_TENANT_ID").ok();
+        let organization_id = std::env::var("TELMONI_ORG").ok();
         let auth_token = std::env::var("TELMONI_API_KEY").ok();
 
         Self {
             endpoint,
-            tenant_id,
+            organization_id,
             auth_token,
         }
     }
 }
 
-/// The official Telmoni client instance.
+/// The Telmoni client instance: holds configuration until the SDK's contract exists.
 #[derive(Debug, Clone)]
 pub struct Client {
     config: Config,

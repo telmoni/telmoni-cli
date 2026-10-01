@@ -1,8 +1,11 @@
 # Telmoni Go SDK
 
-The official Go SDK for the **Telmoni** platform.
+A scaffold: configuration (endpoint, API key, organization) and nothing that
+calls the platform yet. It grows a client once its contract exists.
 
 ## Installation
+
+Not published yet. Use it from this repository:
 
 ```console
 go get github.com/telmoni/telmoni-cli/sdk/go
@@ -18,7 +21,7 @@ import (
 )
 
 func main() {
-	// Initialize from environment (TELMONI_ENDPOINT, TELMONI_API_KEY, TELMONI_TENANT_ID)
+	// Reads TELMONI_ENDPOINT, TELMONI_API_KEY and TELMONI_ORG
 	client := telmoni.NewFromEnv()
 	_ = client
 }

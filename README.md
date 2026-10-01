@@ -120,7 +120,6 @@ telmoni config get endpoint
 | Key | Description | Default |
 |---|---|---|
 | `endpoint` | Telmoni endpoint URL | `https://telmoni.com` |
-| `output_format` | CLI output format (`text` or `json`) | `text` |
 
 #### Environment Variables
 
@@ -149,16 +148,14 @@ telmoni config get endpoint
 
 ## Multi-Language SDKs
 
-All SDKs provide idiomatic clients for communicating with the Telmoni platform.
+The SDKs are scaffolds: configuration (endpoint, API key, organization) and nothing that calls the platform yet. Each grows a client once its contract exists.
 
-| Language | Directory | Package / Module |
+| Language | Directory | Package name |
 |---|---|---|
-| **TypeScript / JS** | [`sdk/typescript`](sdk/typescript/) | `telmoni` (npm) |
+| **TypeScript / JS** | [`sdk/typescript`](sdk/typescript/) | `telmoni` |
 | **Go** | [`sdk/go`](sdk/go/) | `github.com/telmoni/telmoni-cli/sdk/go` |
-| **Python** | [`sdk/python`](sdk/python/) | `telmoni` (PyPI) |
-| **Rust** | [`sdk/rust`](sdk/rust/) | `telmoni-sdk` (crates.io) |
-
-See each directory's `README.md` for language-specific quickstart guides and API references.
+| **Python** | [`sdk/python`](sdk/python/) | `telmoni` |
+| **Rust** | [`sdk/rust`](sdk/rust/) | `telmoni-sdk` |
 
 ---
 
@@ -180,8 +177,10 @@ cd sdk/typescript && npm run verify
 cd sdk/go && go test -v ./...
 
 # Python SDK
-cd sdk/python && pytest
+sdk/python/.venv/bin/pytest sdk/python
 ```
+
+For a comprehensive guide to architecture, authentication, and workflows, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
@@ -191,6 +190,10 @@ Please report vulnerabilities following our [Security Policy](SECURITY.md). Do n
 
 ---
 
-## License
+## Community & License
 
-Licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE)).
+- [Contributing](CONTRIBUTING.md) — DCO requirements, code standards, and PR workflows.
+- [Code of Conduct](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
+- [Development Guide](DEVELOPMENT.md) — In-depth architectural and developer documentation.
+- [Security Policy](SECURITY.md) — Vulnerability reporting channels and safe harbor.
+- [License](LICENSE) — Licensed under the Apache License, Version 2.0.

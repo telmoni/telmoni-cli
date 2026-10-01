@@ -1,2 +1,2 @@
-// The Go SDK for the Telmoni platform and multi-tenant cloud.
+// Package telmoni is the Go SDK scaffold for the Telmoni platform: configuration only, no HTTP yet.
 package telmoni

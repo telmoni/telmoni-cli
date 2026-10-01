@@ -59,7 +59,7 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers privately. For security-related concerns,
+reported to the project maintainers privately at **hello@telmoni.com**. For security-related concerns,
 please follow the reporting channels in [SECURITY.md](SECURITY.md). All
 complaints will be reviewed and investigated promptly and fairly.
 

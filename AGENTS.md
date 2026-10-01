@@ -1,100 +1,59 @@
 # Telmoni CLI — Agent Guidelines
 
-These are the ground rules for modifying this repository. `CLAUDE.md` and
-`.github/copilot-instructions.md` defer here.
+The `telmoni` command-line client and client SDK scaffolds ([`telmoni/telmoni-cli`](https://github.com/telmoni/telmoni-cli)): a Rust workspace (`src/`) and SDKs (`sdk/`). It is a client of the platform ([`telmoni/telmoni`](https://github.com/telmoni/telmoni)) and of nothing else: nothing here runs on a server, holds a database or verifies a token. Every request goes to one base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise (`http://localhost:3000` locally), and no other hostname appears in `src/` or `sdk/`.
 
-**Stack:** Rust workspace (`src/`) for the `telmoni` CLI and client SDK scaffolds (`sdk/`). It is a **client of Telmoni and of nothing else**. The platform it talks to lives in a separate repository, `~/Desktop/telmoni`; nothing in this tree runs on a server, holds a database, or verifies a token. Every request goes to one base URL, the Telmoni endpoint, which defaults to `https://telmoni.com` and is overridden by `TELMONI_ENDPOINT` (for local work, the console dev server at `http://localhost:3000`). No other hostname appears anywhere in this tree.
+## Ground Rules
+- **Pre-launch:** nothing has shipped. Change commands, flags, the credentials file and the config file directly to their ideal shape; no migration of an old file, no deprecated aliases, no shims.
+- **Quality gate:** never weaken a test or leave the tree broken.
+- **Ask first:** any dependency change (nothing in the current scope needs one; anything added must pass `cargo deny check`) and any external-state change, such as publishing a release or a package.
+- **Stateless machines:** the CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the credentials file.
 
-## 🚧 Status & Ground Rules
-- **Client of Telmoni Only:** Nothing in this tree runs on a server, holds a database, or verifies a token. Every request goes to the Telmoni endpoint.
-- **Stateless Machines:** The CLI runs on stateless machines: SSH sessions, containers, CI runners, hosts with no browser. Nothing in it may depend on a browser reaching the machine the CLI runs on, on a listening port, or on state that outlives the credentials file.
-- **Ask First (External/Deps):** No new dependencies without asking Kendrick first. Nothing in the current scope needs one. What is added must pass `cargo deny check`.
-- **Quality Gate Unchanged:** `cargo xtask ci` must remain 100% green at all times. Never leave the tree broken.
-- **Do Not Commit, Branch or Push:** Kendrick reviews and commits. Never create branches or run `git push`.
-
-## 🗺️ Where Things Live
+## Where Things Live
 | Path | What |
 |---|---|
-| `src/main.rs` | CLI entry point, argument parsing via `clap`, and top-level environment variable reads. |
-| `src/lib.rs` | Library root re-exporting authentication, configuration, commands, and transport modules. |
-| `src/auth/` | Authentication implementations: RFC 8628 device flow (`device.rs`) and storage (`storage.rs`). |
-| `src/commands/` | CLI command handlers: `login`, `logout`, `status` (`whoami`), `org`, `config`. |
-| `src/client.rs` | Public `/v1` client operations for static API tokens (`telmoni_...`). |
-| `src/config.rs` | Local configuration loading (`~/.config/telmoni/config.json` or OS equivalent). |
-| `src/transport.rs` | Transport trait, `ReqwestTransport`, error response parser, and User-Agent builder. |
-| `sdk/` | Client SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`). Pure configuration structs with no HTTP calls. |
-| `tests/` | Mock-based unit and integration test suites (`auth_tests.rs`). Zero network, zero sleeps. |
-| `xtask/` | Workspace CI and automation task runner (`cargo xtask ci`). |
+| `src/` | The CLI: `main.rs` (the only environment reads), `auth/` (device flow, credentials), `commands/`, `client.rs` (`/v1`), `transport.rs` (HTTP, errors, User-Agent). |
+| `sdk/` | SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`): configuration structs, no HTTP. |
+| `tests/` | Mock-based suites: no network, no sleeps. |
+| `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
+| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform, and the authority on the wire contract. |
+| [`telmoni/docs`](https://github.com/telmoni/docs) | Sibling repo, checked out as `../docs`: the customer docs site, including the CLI and SDK pages. |
 
-## 🛠️ Verification & Commands
-- **The Gate (`cargo xtask ci`):** Must pass before reporting any task done. Every step runs with `--locked`:
-  - Format: `cargo fmt --all -- --check`
-  - Lints: `cargo clippy --workspace --all-targets --locked -- -D warnings`
-  - Build: `cargo build --workspace --locked`
-  - Tests: `cargo test --workspace --locked`
-  - Documentation: `cargo doc --no-deps --workspace --locked`
-  - Dependency & License audits: `cargo deny check`
-- **Fast Local Checks:** `cargo check --workspace`, `cargo fmt --all`, `cargo test`.
-- **SDK Scaffolds Verification:**
-  - TypeScript: `npm test --prefix sdk/typescript`
-  - Go: `go test ./...` in `sdk/go`
-  - Python: `pytest sdk/python` (using `sdk/python/.venv/bin/pytest`)
+## Commands
+- **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, clippy, build, test, doc and `cargo deny check`, all `--locked`.
+- **SDK scaffolds:** `npm test --prefix sdk/typescript`, `go test ./...` in `sdk/go`, `sdk/python/.venv/bin/pytest sdk/python`.
+- **Locally:** `cargo run -- <command>`; with the platform's `make up` running, `TELMONI_ENDPOINT=http://localhost:3000` points it there.
 
-## 🏗️ Architecture & Code Rules
-- **No Panics:** Zero panics in production code. Clippy denies `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, and `unreachable` at the workspace level. Use `Result` and `Option` with `anyhow` or a typed error. Tests may `unwrap` and `expect`; production code may not.
-- **No Unsafe Code:** `#![forbid(unsafe_code)]` on every crate.
-- **Test Isolation (No Network, No Real Sleeps):** HTTP calls, sleeps, and the clock are injected as closures or a small trait (`Transport`). The credentials path is a value (`CredentialsStore { path }`) so tests write under `std::env::temp_dir()`, never touching the real credentials file.
-- **Environment Variables:** Library code never reads `std::env`; commands read the environment at their entry point and pass values down. (Edition 2024 makes `set_var` unsafe, and unsafe is forbidden, so env-reading library code cannot be tested.) A `.env` in the working directory is read only by `main.rs` in debug builds, for `cargo run` from the repository root; release builds never read it, so a checkout the CLI happens to run in cannot redirect the endpoint or supply an API key.
-- **Output & Logging Hygiene:** Do not write to `stdout` except for the command's own output. `println!` is correct for a CLI; diagnostics go to `stderr` or `tracing`.
-- **Agent Hygiene:** No obvious comments (document *why*, never *what*). No AI signatures in code or commits. Edit files deliberately without bulk script regexes.
+## Code Rules
+- **Tests are hermetic:** HTTP, sleeps and the clock are injected (`Transport`, closures); the credentials path is a value, so tests write under `std::env::temp_dir()`.
+- **Environment only at the edge:** only `main.rs` reads the environment and passes values down. `main.rs` reads a `.env` in debug builds only, so a checkout the CLI runs in cannot redirect the endpoint or supply a key.
+- **Output:** stdout carries only the command's output; diagnostics go to stderr or `tracing`.
 
-## 🔐 Authentication & Wire Contract
-**The contract is the platform's code, and it is authoritative:** the `/cli` door in `~/Desktop/telmoni/web/app/cli/[...path]/route.ts`, the `/me` answer in `~/Desktop/telmoni/crates/auth/src/handler/me.rs`, and the `/v1` lanes in `~/Desktop/telmoni/crates/auth/src/handler/v1.rs`. Read them before touching `src/auth/` or `src/client.rs`. If the platform does not behave as the rules below say, report the disagreement; the server side is fixed in the platform repository, never worked around here.
+## Contracts
+The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/telmoni/telmoni), the `/cli` door (`web/app/cli/[...path]/route.ts`), `/me` (`crates/auth/src/handler/me.rs`) and `/v1` (`crates/auth/src/handler/v1.rs`). Read them before touching `src/auth/` or `src/client.rs`; report a disagreement rather than working around it here.
+- **Sign-in is the RFC 8628 device flow** behind the `/cli` door, never WorkOS directly: `POST /cli/auth/device`, print the code and URL (open it when a browser exists), poll `POST /cli/auth/device/poll` every `interval` (202 not yet, `slow_down` adds 5 s, 403 denied, 400 expired), then `POST /cli/me`. No loopback redirect, listener or PKCE.
+- **Refresh** is `POST /cli/auth/refresh` with `{ refreshToken, sessionRowId }`. **Sign-out** is `POST /cli/sessions/{sessionRowId}/revoke` with `x-organization-id`, then the credentials file goes whatever the answer.
+- **A 401** on `/cli/me`, refresh or revoke ends the session: delete the credentials file, print "run `telmoni login`", don't retry. Except `/errors/auth/token-expired`, which one refresh cures. A 401 under an API key on `/v1` leaves the file alone; a 5xx never deletes it.
+- **Errors** come in three shapes: RFC 9457 problem details (print `title: detail`), `{ "error": … }`, or anything else (`request failed (<status>)` plus the first 200 characters). Never print a token, refresh token, device code or API key; the user code is the only code shown.
+- **Every request** carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)`, and every bearer request `x-organization-id` (from `/cli/me`'s `activeOrganizationId` or `TELMONI_ORG`). Nullable server fields are `Option`s. An organization's label is its trimmed `name`, else `ownerEmail`, else `"Organization"`.
+- **API keys** start with `telmoni_` and open only `{endpoint}/v1` reads, never `/cli`.
+- **Credentials** live in `dirs::config_dir()/telmoni/credentials.json`, mode `0600`, unencrypted.
+- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one credentials file, no profiles. A command that touches customer data needs a `/cli` lane in the platform first. The SDKs stay configuration-only until their contract exists.
 
-- **Zero WorkOS Direct Exposure:** The CLI never talks to WorkOS. It holds no WorkOS client id, no WorkOS URL, and no secret. Telmoni handles authentication behind its own `/cli` door, which is the CLI's sole authentication surface.
-- **Interactive Sign-In (RFC 8628 Device Flow):**
-  - Calls `POST /cli/auth/device` to obtain a short code and verification URL.
-  - Prints both (and opens the complete URL when a browser is available).
-  - Polls `POST /cli/auth/device/poll` every `interval` seconds until HTTP 200.
-  - HTTP 202 is "not yet"; on `slow_down` add 5 seconds to the interval; HTTP 403 is denied and HTTP 400 is expired, both of which terminate the attempt.
-  - Calls `POST /cli/me` upon successful authorization.
-- **No Redirects / No Listener / No PKCE:** There is no loopback redirect, no local listener port, and no PKCE. Do not reintroduce them.
-- **Token Refresh:** Refresh is `POST /cli/auth/refresh` sending `{ refreshToken, sessionRowId }`, never a call to the provider.
-- **Sign-Out & Revocation:** Calls `POST /cli/sessions/{sessionRowId}/revoke` with the active organization context (`x-organization-id`), which the server requires of anyone who belongs to an organization. Then the credentials file is deleted whatever the answer.
-- **Session Termination Invariants (HTTP 401):**
-  - A 401 on `/cli/me`, refresh, or revoke means the session was ended (from the web console's Active Sessions page, by account deletion, or by expiry). Delete the credentials file, print "run `telmoni login`", and do not retry.
-  - The one exception is an RFC 9457 problem typed `/errors/auth/token-expired`, which a single refresh cures.
-  - A 401 on the device code poll lane means the device code is dead.
-  - A 401 under an API key on `/v1` is `{ "error": … }` and leaves the credentials file alone.
-  - A 503 or 5xx server error never deletes credentials.
-- **Nullable Fields as Option:** Every field the server marks nullable is an `Option`: `email`, `firstName`, `lastName`, `refreshToken`, `authMethod`, `displayName`, `ownerEmail`, `ownerDisplayName`, `sessionRowId`, `verificationUriComplete`.
-- **Organization Label Resolution:** `name` when non-empty after trimming, else `ownerEmail` when non-null, else the literal `"Organization"`.
-- **Error Parser (Three Shapes):**
-  - Shape 1: RFC 9457 `application/problem+json` (`{ type, title, status, detail }`) — prints `title: detail`.
-  - Shape 2: `{ "error": string }`.
-  - Shape 3: Raw fallback `request failed (<status>)` plus the first 200 characters of the body.
-  - Never print a token, a refresh token, a device code, or an API key in any error or status message. The user code is the only code displayed.
-- **Standardized User-Agent:** Every request carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)` built from `CARGO_PKG_VERSION`, `std::env::consts::OS`, and `std::env::consts::ARCH`. The server labels the person's session from this string.
-- **Tenant Context Headers:** Dispatched via `x-organization-id` on every bearer lane, taken from what `/cli/me` answered (`activeOrganizationId`) or what `TELMONI_ORG` specifies.
-- **API Keys (`telmoni_…`):** The non-interactive path that opens only `{endpoint}/v1` reads (`/v1/organization`). They do not go through `/cli`. A key that does not start with `telmoni_` is an error.
-- **Local Credentials File:** Stored at `dirs::config_dir()/telmoni/credentials.json` (`~/Library/Application Support/telmoni/` on macOS, `~/.config/telmoni/` on Linux) with mode `0600`. Unencrypted.
+## Agent Hygiene
+- **This repo only:** change nothing in another repository (`telmoni/telmoni`, `telmoni/docs`, any other) unless the user says so for this task; that binds subagents too. Reading is fine.
+- Edit `AGENTS.md` (`.github/copilot-instructions.md` points here) only when the user asks outright; otherwise propose a diff.
+- Comments say *why*, never *what*. No AI signatures anywhere.
+- No scripted bulk edits: edit each file deliberately. One-off scripts, backups and logs go in `/tmp/telmoni/`.
+- Never read, print, diff or recreate `.env` or the real credentials file: they hold an API key or a refresh token. Change one key by name, after `cp -p` to `/tmp/telmoni/`.
+- Keep the repo slim: fix a real problem where it lives. No guard script, lint gate, CI job or xtask step for a problem that is not happening.
 
-## 🔭 Scope & Boundaries
-- **CLI Commands:** The CLI's commands are strictly `login`, `logout`, `status` (alias `whoami`), `org` (subcommands `list`, `switch`), and `config`. There are no profiles: one credentials file, one session. A new command that reads or writes customer data needs a lane on the `/cli` door first, which is platform repository work.
-- **SDK Scaffolds (`sdk/`):** Pure configuration structs without HTTP dependencies. They stay that way until their wire contract exists; the only edit they take is the endpoint hostname.
+## Git Rules
+- Commit only when asked: never `git add` or `git commit` unprompted.
+- Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`) of 1–5 lines: a subject, then optionally a blank line and up to 3 lines on *why*. No file lists, test output, AI signatures or `Co-authored-by` trailers.
+- No branches, worktrees, pushes or pull requests.
 
-## 📝 Git Rules (Strict)
-- **Commit Only on Command:** Never run `git add` or `git commit` unless explicitly instructed.
-- **Format:** Conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`). Hard limit of 1–5 lines (1 subject line + optional blank line + max 3 body lines explaining *why*). No file lists, test outputs, or task summaries.
-- **No Branches or Pushes:** Kendrick reviews and commits. Never create branches (`checkout -b`, `switch -c`, `branch`, or worktrees) and never run `git push`.
-
-## ✅ Definition of Done
-Before reporting a change as finished:
-- [ ] `cargo xtask ci` passes all 6 gates with `--locked` (fmt, clippy, build, test, doc, cargo deny check).
-- [ ] Zero panics (`unwrap`, `expect`, `panic`, `todo`, `unimplemented`, `unreachable`) and zero `unsafe` in production code.
-- [ ] No new dependencies added to `Cargo.toml`.
-- [ ] Library code does not read `std::env`.
-- [ ] Tests run deterministically without network access or real sleeps, writing under `temp_dir()`.
-- [ ] All HTTP requests carry the standardized `User-Agent` and appropriate tenant headers.
-- [ ] No secrets, tokens, or PII are exposed in logs or console output.
-- [ ] No unasked tests or benchmarks ran; no `git add`, `git commit`, branching, or `git push` performed.
+## Definition of Done
+- [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
+- [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
+- [ ] A change a user can see names the customer pages it leaves wrong (`api/cli.mdx`, `api/sdks.mdx` in `telmoni/docs`).
+- [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).

@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use clap::Subcommand;
 
-use crate::auth::device::{fetch_me, refresh_if_needed};
+use crate::auth::device::{fetch_me_for_session, refresh_if_needed};
 use crate::auth::storage::{AuthType, CredentialsStore, StoredOrganization, StoredPerson};
 use crate::transport::Transport;
 
@@ -65,9 +65,7 @@ pub async fn execute(
 
             refresh_if_needed(transport, store, &mut creds).await?;
 
-            let access_token = creds.access_token.as_deref().unwrap_or_default();
-
-            let me = fetch_me(transport, &creds.endpoint, access_token, Some(&org_id)).await?;
+            let me = fetch_me_for_session(transport, store, &mut creds, Some(&org_id)).await?;
 
             if me.active_organization_id.as_deref() != Some(&org_id) {
                 bail!("you are no longer in {org_id}");

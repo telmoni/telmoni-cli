@@ -9,7 +9,7 @@ DEFAULT_ENDPOINT = "https://telmoni.com"
 @dataclass
 class Config:
     endpoint: str = DEFAULT_ENDPOINT
-    tenant_id: str | None = None
+    organization_id: str | None = None
     auth_token: str | None = None
 
     def __post_init__(self) -> None:
@@ -24,9 +24,9 @@ class Config:
             or DEFAULT_ENDPOINT
         )
         auth_token = os.getenv("TELMONI_API_KEY") or os.getenv("TELMONI_AUTH_TOKEN")
-        tenant_id = os.getenv("TELMONI_TENANT_ID") or os.getenv("TELMONI_ORG")
+        organization_id = os.getenv("TELMONI_ORG")
         return cls(
             endpoint=endpoint,
             auth_token=auth_token,
-            tenant_id=tenant_id,
+            organization_id=organization_id,
         )

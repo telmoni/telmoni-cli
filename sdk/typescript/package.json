@@ -1,7 +1,7 @@
 {
   "name": "telmoni",
   "version": "0.1.0",
-  "description": "Official TypeScript & JavaScript SDK for the Telmoni platform",
+  "description": "TypeScript & JavaScript SDK scaffold for the Telmoni platform",
   "license": "Apache-2.0",
   "author": "Kendrick Lawton",
   "homepage": "https://github.com/telmoni/telmoni-cli",

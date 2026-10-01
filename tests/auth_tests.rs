@@ -1272,3 +1272,235 @@ async fn test_organization_wire_shape() {
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].url, "https://telmoni.com/v1/organization");
 }
+
+fn device_creds(orgs: &[&str], active: &str) -> Credentials {
+    Credentials {
+        auth_type: AuthType::Device,
+        endpoint: "https://telmoni.com".to_string(),
+        access_token: Some("at".to_string()),
+        refresh_token: Some("rt".to_string()),
+        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+        session_row_id: Some("0192a3b4-1111".to_string()),
+        person: Some(StoredPerson {
+            user_id: "usr_1".to_string(),
+            email: "alice@example.com".to_string(),
+            display_name: None,
+        }),
+        organizations: orgs
+            .iter()
+            .map(|id| StoredOrganization {
+                organization_id: (*id).to_string(),
+                label: (*id).to_string(),
+                role: "member".to_string(),
+            })
+            .collect(),
+        active_organization_id: Some(active.to_string()),
+        api_key: None,
+        updated_at: 100,
+    }
+}
+
+const TOKEN_EXPIRED: &str =
+    r#"{"type":"/errors/auth/token-expired","title":"token expired","status":401}"#;
+
+// 16. A server failure while curing an expired token never deletes credentials
+#[tokio::test]
+async fn test_status_keeps_credentials_on_refresh_server_error() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+
+    transport.push_answer(401, TOKEN_EXPIRED);
+    transport.push_answer(503, r#"{"error":"upstream unavailable"}"#);
+
+    let err = status::execute(
+        status::StatusArgs { json: false },
+        &transport,
+        &store,
+        &Config::default(),
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.to_string(), "upstream unavailable");
+    assert!(store.path.exists(), "a 503 must never delete credentials");
+}
+
+// 17. org switch obeys the session's 401 rules: ended deletes, expired is cured
+#[tokio::test]
+async fn test_org_switch_session_401s() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+    store
+        .save(&device_creds(&["org_1", "org_2"], "org_1"))
+        .unwrap();
+
+    transport.push_answer(
+        401,
+        r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#,
+    );
+    let err = org::execute(
+        org::OrgCommand::Switch {
+            org_id: "org_2".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.to_string(), "session ended; run telmoni login");
+    assert!(!store.path.exists(), "an ended session deletes credentials");
+
+    store
+        .save(&device_creds(&["org_1", "org_2"], "org_1"))
+        .unwrap();
+    transport.push_answer(401, TOKEN_EXPIRED);
+    transport.push_answer(
+        200,
+        r#"{"userId":"usr_1","accessToken":"fresh","refreshToken":"rt2","expiresIn":1800}"#,
+    );
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [
+                { "organizationId": "org_1", "name": "One", "role": "owner" },
+                { "organizationId": "org_2", "name": "Two", "role": "member" }
+            ],
+            "activeOrganizationId": "org_2",
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+    org::execute(
+        org::OrgCommand::Switch {
+            org_id: "org_2".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap();
+
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.access_token.as_deref(), Some("fresh"));
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
+}
+
+// 18. TELMONI_ORG on status is held to the server's answer, not the cache
+#[tokio::test]
+async fn test_status_telmoni_org_left_since_cached() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    store
+        .save(&device_creds(&["org_1", "org_2"], "org_1"))
+        .unwrap();
+
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [ { "organizationId": "org_1", "name": "One", "role": "owner" } ],
+            "activeOrganizationId": "org_1",
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+
+    let err = status::execute(
+        status::StatusArgs { json: false },
+        &transport,
+        &store,
+        &Config::default(),
+        Some("org_2".to_string()),
+        None,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.to_string(), "you are no longer in org_2");
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.organizations.len(), 1, "the fresh list is kept");
+}
+
+// 19. logout names the organization `/me` answers when the cached one is refused
+#[tokio::test]
+async fn test_logout_retries_revoke_with_current_organization() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+    store
+        .save(&device_creds(&["org_gone"], "org_gone"))
+        .unwrap();
+
+    transport.push_answer(
+        403,
+        r#"{"type":"/errors/authz/forbidden","title":"forbidden","status":403}"#,
+    );
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [ { "organizationId": "org_now", "name": "Now", "role": "member" } ],
+            "activeOrganizationId": "org_now",
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+    transport.push_answer(204, "");
+
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
+        .await
+        .unwrap();
+
+    let reqs = transport.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs[0].organization.as_deref(), Some("org_gone"));
+    assert_eq!(reqs[1].url, "https://telmoni.com/cli/me");
+    assert_eq!(reqs[1].organization, None);
+    assert_eq!(reqs[2].organization.as_deref(), Some("org_now"));
+    assert!(!store.path.exists());
+}
+
+// 20. The credentials file is private from creation: a directory made for it
+//     is 0700, an older 0644 file comes out 0600, and no temporary is left
+#[cfg(unix)]
+#[test]
+fn test_credentials_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("telmoni-perm-{}-{}", std::process::id(), n));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = CredentialsStore::new(dir.join("telmoni").join("credentials.json"));
+    let creds = device_creds(&["org_1"], "org_1");
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+    store.save(&creds).unwrap();
+    assert_eq!(mode(&store.path), 0o600);
+    assert_eq!(mode(store.path.parent().unwrap()), 0o700);
+
+    std::fs::set_permissions(&store.path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    store.save(&creds).unwrap();
+    assert_eq!(
+        mode(&store.path),
+        0o600,
+        "an older, looser file is replaced"
+    );
+    assert_eq!(store.load().unwrap(), Some(creds));
+
+    let leftovers: Vec<_> = std::fs::read_dir(store.path.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        leftovers,
+        vec![std::ffi::OsString::from("credentials.json")]
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

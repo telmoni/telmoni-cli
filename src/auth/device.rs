@@ -351,26 +351,78 @@ pub async fn refresh_if_needed(
     .await;
 
     match res {
-        Ok(authn) => {
-            creds.access_token = Some(authn.access_token);
-            if let Some(new_rt) = authn.refresh_token {
-                creds.refresh_token = Some(new_rt);
-            }
-            creds.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
-            creds.updated_at = chrono::Utc::now().timestamp();
-            store.save(creds)?;
-            Ok(())
+        Ok(authn) => apply_refresh(store, creds, authn),
+        Err(err) => Err(ended_on_401(store, err)),
+    }
+}
+
+/// `POST /cli/me` for the stored session, held to the platform's 401 rules: a
+/// problem typed `/errors/auth/token-expired` is cured by one refresh and one
+/// retry, and any other 401 means the session was ended elsewhere, so the
+/// credentials file goes. Nothing else deletes it: a 5xx or a dropped
+/// connection says nothing about whether the session is still live.
+pub async fn fetch_me_for_session(
+    transport: &impl Transport,
+    store: &CredentialsStore,
+    creds: &mut Credentials,
+    organization_id: Option<&str>,
+) -> Result<Me> {
+    let access_token = creds.access_token.clone().context("missing access token")?;
+    let err = match fetch_me(transport, &creds.endpoint, &access_token, organization_id).await {
+        Ok(me) => return Ok(me),
+        Err(err) => err,
+    };
+    let token_expired = err.downcast_ref::<LaneError>().is_some_and(|e| {
+        e.status == 401 && e.problem_type.as_deref() == Some("/errors/auth/token-expired")
+    });
+    if !token_expired {
+        return Err(ended_on_401(store, err));
+    }
+
+    let Some(rt) = creds.refresh_token.clone() else {
+        let _ = store.clear();
+        bail!("session ended; run telmoni login");
+    };
+    let authn = refresh_tokens(
+        transport,
+        &creds.endpoint,
+        &rt,
+        creds.session_row_id.as_deref(),
+    )
+    .await
+    .map_err(|err| ended_on_401(store, err))?;
+    let fresh = authn.access_token.clone();
+    apply_refresh(store, creds, authn)?;
+
+    fetch_me(transport, &creds.endpoint, &fresh, organization_id)
+        .await
+        .map_err(|err| ended_on_401(store, err))
+}
+
+fn apply_refresh(
+    store: &CredentialsStore,
+    creds: &mut Credentials,
+    authn: AuthnResult,
+) -> Result<()> {
+    creds.access_token = Some(authn.access_token);
+    if let Some(new_rt) = authn.refresh_token {
+        creds.refresh_token = Some(new_rt);
+    }
+    creds.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
+    creds.updated_at = chrono::Utc::now().timestamp();
+    store.save(creds)
+}
+
+/// A 401 on a session lane ends the session here too; any other failure
+/// leaves the credentials file alone and surfaces the server's message.
+fn ended_on_401(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Error {
+    match err.downcast_ref::<LaneError>() {
+        Some(lane_err) if lane_err.status == 401 => {
+            let _ = store.clear();
+            anyhow::anyhow!("session ended; run telmoni login")
         }
-        Err(err) => {
-            if let Some(lane_err) = err.downcast_ref::<LaneError>() {
-                if lane_err.status == 401 {
-                    let _ = store.clear();
-                    bail!("session ended; run telmoni login");
-                }
-                bail!("{}", lane_err.message);
-            }
-            Err(err)
-        }
+        Some(lane_err) => anyhow::anyhow!("{}", lane_err.message),
+        None => err,
     }
 }
 

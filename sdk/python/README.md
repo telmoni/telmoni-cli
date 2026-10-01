@@ -1,11 +1,14 @@
 # Telmoni Python SDK
 
-The official Python SDK for the **Telmoni** platform.
+A scaffold: configuration (endpoint, API key, organization) and nothing that
+calls the platform yet. It grows a client once its contract exists.
 
 ## Installation
 
+Not published yet. Install it from a checkout of this repository:
+
 ```console
-pip install telmoni
+pip install ./sdk/python
 ```
 
 ## Quick Start
@@ -13,6 +16,6 @@ pip install telmoni
 ```python
 from telmoni import Telmoni
 
-# Automatically loads from TELMONI_ENDPOINT, TELMONI_API_KEY, TELMONI_TENANT_ID
+# Reads TELMONI_ENDPOINT, TELMONI_API_KEY and TELMONI_ORG
 client = Telmoni.from_env()
 ```

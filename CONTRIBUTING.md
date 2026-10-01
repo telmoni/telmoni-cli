@@ -62,4 +62,5 @@ cargo test
 1. **Keep Pull Requests Focused:** Submit PRs that address a single issue or feature.
 2. **Commit Style:** Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `refactor:`, `chore:`).
 3. **Sign Your Commits:** Ensure every commit includes the DCO sign-off (`-s`).
-4. **Ensure Clean CI:** Verify that `cargo xtask ci` passes cleanly before requesting review.
+4. **No AI Signatures:** Do not include automated AI co-author or attribution tags in commits or PR bodies.
+5. **Ensure Clean CI:** Verify that `cargo xtask ci` passes cleanly before requesting review.
