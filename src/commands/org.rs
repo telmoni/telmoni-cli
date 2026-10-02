@@ -56,12 +56,34 @@ pub async fn execute(
             Ok(())
         }
         OrgCommand::Switch { organization } => {
-            let matched = creds
+            let target = if let Some(by_id) = creds
                 .organizations
                 .iter()
-                .find(|o| o.organization_id == organization || o.label.eq_ignore_ascii_case(&organization));
-            let Some(target) = matched else {
-                bail!("unknown organization {organization}; run telmoni organization list");
+                .find(|o| o.organization_id == organization)
+            {
+                by_id.clone()
+            } else {
+                let matching: Vec<_> = creds
+                    .organizations
+                    .iter()
+                    .filter(|o| o.label.eq_ignore_ascii_case(&organization))
+                    .collect();
+                match matching.as_slice() {
+                    [] => {
+                        bail!("unknown organization {organization}; run telmoni organization list")
+                    }
+                    [single] => (*single).clone(),
+                    multiple => {
+                        let ids: Vec<String> = multiple
+                            .iter()
+                            .map(|o| format!("{} ({})", o.organization_id, o.role))
+                            .collect();
+                        bail!(
+                            "multiple organizations named '{organization}': {}; specify by organization ID",
+                            ids.join(", ")
+                        );
+                    }
+                }
             };
             let target_id = target.organization_id.clone();
 

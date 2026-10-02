@@ -30,9 +30,12 @@ pub struct LoginArgs {
     pub no_browser: bool,
 }
 
-/// Validates that an API key starts with `telmoni_` and contains no whitespace.
+/// Validates that an API key starts with `telmoni_`, has a non-empty payload, and contains no whitespace.
 pub fn validate_api_key(key: &str) -> Result<()> {
-    if !key.starts_with("telmoni_") || key.chars().any(|c| c.is_whitespace()) {
+    if !key.starts_with("telmoni_")
+        || key.len() <= "telmoni_".len()
+        || key.chars().any(|c| c.is_whitespace())
+    {
         bail!("an API key starts with telmoni_ and has no spaces");
     }
     Ok(())
@@ -79,11 +82,14 @@ pub async fn execute(
     println!("First copy your one-time code: {}", start.user_code);
     println!("Then open {} and enter it.", start.verification_uri);
 
-    if !args.no_browser
-        && let Some(ref complete_url) = start.verification_uri_complete
-        && let Err(e) = open::that(complete_url)
-    {
-        eprintln!("note: could not open browser: {e}");
+    if !args.no_browser {
+        let browser_url = start
+            .verification_uri_complete
+            .as_deref()
+            .unwrap_or(&start.verification_uri);
+        if let Err(e) = open::that(browser_url) {
+            eprintln!("note: could not open browser: {e}");
+        }
     }
 
     eprintln!("Waiting for approval…");

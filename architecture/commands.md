@@ -17,9 +17,9 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 `main` (`src/main.rs`) runs in this order:
 
 1. **Parse the command line** with clap. The global `-v` switches the stderr log filter to debug. There are no `tracing` calls in `src/` yet, so it changes nothing today.
-2. **Resolve the credentials path:** `dirs::config_dir()/telmoni/credentials.json`.
+2. **Resolve the credentials path:** `dirs::config_dir()/telmoni/credentials.json` (falling back to `./telmoni/credentials.json` if no user config directory is resolved).
 3. **Build the HTTP transport** (see [transport](transport.md)).
-4. **Read the configuration file.** A malformed file silently becomes the default.
+4. **Read the configuration file.** A malformed file emits a note on stderr and becomes the default.
 5. **Read the environment** (below), and dispatch.
 6. **On error**, print it to stderr and exit 1. Only the outermost context is printed, so a network failure reads "transport send failed for `<url>`", without its cause.
 
@@ -58,7 +58,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 3. the configuration file's `endpoint`;
 4. `DEFAULT_TELMONI_ENDPOINT`, `https://telmoni.com`.
 
-Blank values are skipped, and a trailing `/` is trimmed.
+Blank values are skipped, a trailing `/` is trimmed, and a missing scheme defaults to `http://` for localhost/loopback or `https://` otherwise.
 
 ⚠ **Only `login`, and a signed-out `status`, resolve the endpoint.** Every other command uses the endpoint recorded in the credentials file at sign-in. A session belongs to the platform that issued it.
 

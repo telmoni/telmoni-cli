@@ -21,28 +21,47 @@ pub struct Config {
 /// default. Pure, so it is testable; the environment is read only at the
 /// command entry point.
 pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Config) -> String {
-    let non_blank = |s: &str| {
+    let normalize = |s: &str| {
         let trimmed = s.trim();
-        (!trimmed.is_empty()).then(|| trimmed.trim_end_matches('/').to_string())
+        if trimmed.is_empty() {
+            return None;
+        }
+        let without_trailing = trimmed.trim_end_matches('/');
+        if without_trailing.starts_with("http://") || without_trailing.starts_with("https://") {
+            Some(without_trailing.to_string())
+        } else if without_trailing.starts_with("localhost")
+            || without_trailing.starts_with("127.0.0.1")
+            || without_trailing.starts_with("::1")
+        {
+            Some(format!("http://{without_trailing}"))
+        } else {
+            Some(format!("https://{without_trailing}"))
+        }
     };
-    if let Some(ep) = flag.and_then(non_blank) {
+    if let Some(ep) = flag.and_then(normalize) {
         return ep;
     }
-    if let Some(ep) = env_value.and_then(non_blank) {
+    if let Some(ep) = env_value.and_then(normalize) {
         return ep;
     }
 
-    if let Some(ep) = config.endpoint.as_deref().and_then(non_blank) {
+    if let Some(ep) = config.endpoint.as_deref().and_then(normalize) {
         return ep;
     }
 
     DEFAULT_TELMONI_ENDPOINT.to_string()
 }
 
+/// Returns the base directory for Telmoni configuration and state.
+/// Defaults to `dirs::config_dir()`, falling back to the current directory (`.`)
+/// in headless or minimal container environments where `$HOME` is not set.
+pub fn base_config_dir() -> PathBuf {
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
 /// Returns the path to `~/.config/telmoni/config.json`.
 pub fn config_path() -> Result<PathBuf> {
-    let base_dir = dirs::config_dir().context("resolving user config directory")?;
-    Ok(base_dir.join("telmoni").join("config.json"))
+    Ok(base_config_dir().join("telmoni").join("config.json"))
 }
 
 /// Loads configuration from disk, returning default if file does not exist.

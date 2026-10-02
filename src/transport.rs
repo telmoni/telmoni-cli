@@ -149,22 +149,30 @@ impl ReqwestTransport {
 
 impl Transport for ReqwestTransport {
     async fn send(&self, req: LaneRequest) -> anyhow::Result<LaneAnswer> {
+        let carries_credentials = req.bearer.is_some()
+            || req
+                .json
+                .as_ref()
+                .is_some_and(|j| j.get("refreshToken").is_some() || j.get("deviceCode").is_some());
+
+        if carries_credentials
+            && let Ok(parsed_url) = reqwest::Url::parse(&req.url)
+            && parsed_url.scheme() == "http"
+        {
+            let host = parsed_url.host_str().unwrap_or("");
+            let is_loopback = host == "localhost"
+                || host == "127.0.0.1"
+                || host == "::1"
+                || host.ends_with(".localhost");
+            if !is_loopback {
+                anyhow::bail!(
+                    "refusing to send credentials over unencrypted HTTP to '{host}'; use HTTPS"
+                );
+            }
+        }
+
         let mut builder = self.client.request(req.method, &req.url);
         if let Some(token) = req.bearer {
-            if let Ok(parsed_url) = reqwest::Url::parse(&req.url)
-                && parsed_url.scheme() == "http"
-            {
-                    let host = parsed_url.host_str().unwrap_or("");
-                    let is_loopback = host == "localhost"
-                        || host == "127.0.0.1"
-                        || host == "::1"
-                        || host.ends_with(".localhost");
-                    if !is_loopback {
-                        anyhow::bail!(
-                            "refusing to send credentials over unencrypted HTTP to '{host}'; use HTTPS"
-                        );
-                    }
-            }
             builder = builder.header("Authorization", format!("Bearer {token}"));
         }
         if let Some(org) = req.organization {

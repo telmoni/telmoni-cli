@@ -899,6 +899,18 @@ fn test_endpoint_precedence() {
         resolve_endpoint(None, Some(""), &Config::default()),
         "https://telmoni.com"
     );
+    assert_eq!(
+        resolve_endpoint(Some("api.example.com/"), None, &Config::default()),
+        "https://api.example.com"
+    );
+    assert_eq!(
+        resolve_endpoint(Some("localhost:3000/"), None, &Config::default()),
+        "http://localhost:3000"
+    );
+    assert_eq!(
+        resolve_endpoint(Some("127.0.0.1:8080"), None, &Config::default()),
+        "http://127.0.0.1:8080"
+    );
 }
 
 // 10. API key validation
@@ -911,6 +923,7 @@ fn test_api_key_validation() {
     assert!(validate_api_key("telmoni_abc 123").is_err());
     assert!(validate_api_key("telmoni_abc\t123").is_err());
     assert!(validate_api_key("telmoni_abc\n123").is_err());
+    assert!(validate_api_key("telmoni_").is_err());
 }
 
 // 11. API key login and status
@@ -1520,7 +1533,124 @@ async fn test_reqwest_transport_refuses_cleartext_http_credentials() {
 
     let err = transport.send(req).await.unwrap_err();
     assert!(
-        err.to_string().contains("refusing to send credentials over unencrypted HTTP"),
+        err.to_string()
+            .contains("refusing to send credentials over unencrypted HTTP"),
         "expected cleartext refusal, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn test_reqwest_transport_refuses_cleartext_http_tokens_in_json() {
+    use telmoni_cli::transport::{LaneRequest, ReqwestTransport, Transport};
+
+    let transport = ReqwestTransport::new().unwrap();
+    let req = LaneRequest {
+        method: reqwest::Method::POST,
+        url: "http://remote-insecure.example.com/cli/auth/refresh".to_string(),
+        bearer: None,
+        organization: None,
+        json: Some(serde_json::json!({ "refreshToken": "rt_secret" })),
+    };
+
+    let err = transport.send(req).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("refusing to send credentials over unencrypted HTTP"),
+        "expected cleartext refusal for refresh token in json, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_org_switch_duplicate_label_disambiguation() {
+    use telmoni_cli::auth::storage::{AuthType, Credentials, StoredOrganization, StoredPerson};
+    use telmoni_cli::commands::org;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+
+    let creds = Credentials {
+        auth_type: AuthType::Device,
+        endpoint: "https://telmoni.com".to_string(),
+        access_token: Some("token_1".to_string()),
+        refresh_token: Some("rt_1".to_string()),
+        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+        session_row_id: Some("0192a3b4-1111".to_string()),
+        person: Some(StoredPerson {
+            user_id: "usr_1".to_string(),
+            email: "bob@example.com".to_string(),
+            display_name: None,
+        }),
+        organizations: vec![
+            StoredOrganization {
+                organization_id: "org_alpha".to_string(),
+                label: "Acme".to_string(),
+                role: "owner".to_string(),
+            },
+            StoredOrganization {
+                organization_id: "org_beta".to_string(),
+                label: "Acme".to_string(),
+                role: "member".to_string(),
+            },
+        ],
+        active_organization_id: Some("org_alpha".to_string()),
+        api_key: None,
+        updated_at: 100,
+    };
+    store.save(&creds).unwrap();
+
+    // Switching by label "Acme" when two orgs share it should fail and prompt to use ID
+    let err = org::execute(
+        org::OrgCommand::Switch {
+            organization: "Acme".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("multiple organizations named 'Acme'"),
+        "expected disambiguation error, got: {err}"
+    );
+    assert!(err.to_string().contains("org_alpha (owner)"));
+    assert!(err.to_string().contains("org_beta (member)"));
+
+    // Switching by explicit ID works without ambiguity
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "bob@example.com" },
+            "organizations": [
+                { "organizationId": "org_alpha", "name": "Acme", "role": "owner" },
+                { "organizationId": "org_beta", "name": "Acme", "role": "member" }
+            ],
+            "activeOrganizationId": "org_beta"
+        }"#,
+    );
+
+    org::execute(
+        org::OrgCommand::Switch {
+            organization: "org_beta".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap();
+
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_beta"));
+}
+
+#[test]
+fn test_base_config_dir_fallback() {
+    use telmoni_cli::config::{base_config_dir, config_path};
+
+    let base = base_config_dir();
+    assert!(!base.as_os_str().is_empty());
+
+    let path = config_path().unwrap();
+    assert!(path.ends_with("telmoni/config.json"));
 }

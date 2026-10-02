@@ -7,7 +7,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use telmoni_cli::auth::CredentialsStore;
 use telmoni_cli::commands::{config_cmd, login, logout, org, status};
-use telmoni_cli::config::load_config;
+use telmoni_cli::config::{Config, base_config_dir, load_config};
 use telmoni_cli::transport::ReqwestTransport;
 
 #[derive(Parser)]
@@ -64,8 +64,7 @@ async fn main() {
         .with_writer(std::io::stderr)
         .try_init();
 
-    let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let creds_path = config_dir.join("telmoni").join("credentials.json");
+    let creds_path = base_config_dir().join("telmoni").join("credentials.json");
     let store = CredentialsStore::new(creds_path);
 
     let transport = match ReqwestTransport::new() {
@@ -76,7 +75,13 @@ async fn main() {
         }
     };
 
-    let config = load_config().unwrap_or_default();
+    let config = match load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("note: could not load config file: {e}");
+            Config::default()
+        }
+    };
     // The environment is read here and nowhere else, so every library
     // function takes values and can be tested without touching it.
     let telmoni_org_env = env_var("TELMONI_ORGANIZATION").or_else(|| env_var("TELMONI_ORG"));

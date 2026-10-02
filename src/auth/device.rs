@@ -244,7 +244,9 @@ where
                 current_interval += Duration::from_secs(5);
             }
             PollOutcome::RateLimited { retry_after_secs } => {
-                let dur = retry_after_secs.map_or(current_interval, Duration::from_secs);
+                let dur = retry_after_secs.map_or(current_interval, |s| {
+                    Duration::from_secs(s).max(current_interval)
+                });
                 next_sleep = Some(dur);
             }
             PollOutcome::Failed(msg) => bail!("{msg}"),
