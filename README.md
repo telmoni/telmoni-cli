@@ -134,6 +134,7 @@ telmoni config get endpoint
 ## Repository Layout
 
 ```text
+├── architecture/   # How the CLI and SDKs are built, and why
 ├── src/            # Telmoni CLI source code (telmoni-cli crate)
 ├── xtask/          # Dev orchestration (CI gate, release packaging)
 ├── sdk/            # Multi-language client SDKs
@@ -180,7 +181,7 @@ cd sdk/go && go test -v ./...
 sdk/python/.venv/bin/pytest sdk/python
 ```
 
-For a comprehensive guide to architecture, authentication, and workflows, see [DEVELOPMENT.md](DEVELOPMENT.md).
+For setting up and working on the code, see [DEVELOPMENT.md](DEVELOPMENT.md); for how it is built, see [architecture/](architecture/README.md).
 
 ---
 
@@ -194,6 +195,7 @@ Please report vulnerabilities following our [Security Policy](SECURITY.md). Do n
 
 - [Contributing](CONTRIBUTING.md) — DCO requirements, code standards, and PR workflows.
 - [Code of Conduct](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
-- [Development Guide](DEVELOPMENT.md) — In-depth architectural and developer documentation.
+- [Architecture](architecture/README.md) — How the CLI and SDKs are built, and why.
+- [Development Guide](DEVELOPMENT.md) — Setting up, running and checking the code.
 - [Security Policy](SECURITY.md) — Vulnerability reporting channels and safe harbor.
 - [License](LICENSE) — Licensed under the Apache License, Version 2.0.
