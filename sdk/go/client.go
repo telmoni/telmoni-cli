@@ -34,7 +34,12 @@ func ConfigFromEnv() Config {
 
 	return Config{
 		Endpoint:       strings.TrimRight(endpoint, "/"),
-		OrganizationID: os.Getenv("TELMONI_ORG"),
+		OrganizationID: func() string {
+			if org := os.Getenv("TELMONI_ORGANIZATION"); org != "" {
+				return org
+			}
+			return os.Getenv("TELMONI_ORG")
+		}(),
 		AuthToken:      os.Getenv("TELMONI_API_KEY"),
 	}
 }

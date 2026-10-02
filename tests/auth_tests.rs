@@ -694,7 +694,7 @@ async fn test_org_switch_logic() {
     // 8a. Unknown organization rejected without network
     let err = org::execute(
         org::OrgCommand::Switch {
-            org_id: "org_unknown".to_string(),
+            organization: "org_unknown".to_string(),
         },
         &transport,
         &store,
@@ -735,7 +735,7 @@ async fn test_org_switch_logic() {
 
     org::execute(
         org::OrgCommand::Switch {
-            org_id: "org_2".to_string(),
+            organization: "org_2".to_string(),
         },
         &transport,
         &store,
@@ -773,7 +773,7 @@ async fn test_org_switch_logic() {
 
     let mismatch_err = org::execute(
         org::OrgCommand::Switch {
-            org_id: "org_2".to_string(),
+            organization: "org_2".to_string(),
         },
         &transport,
         &store,
@@ -1346,7 +1346,7 @@ async fn test_org_switch_session_401s() {
     );
     let err = org::execute(
         org::OrgCommand::Switch {
-            org_id: "org_2".to_string(),
+            organization: "org_2".to_string(),
         },
         &transport,
         &store,
@@ -1378,7 +1378,7 @@ async fn test_org_switch_session_401s() {
     );
     org::execute(
         org::OrgCommand::Switch {
-            org_id: "org_2".to_string(),
+            organization: "org_2".to_string(),
         },
         &transport,
         &store,
@@ -1503,4 +1503,24 @@ fn test_credentials_file_is_private() {
     );
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test]
+async fn test_reqwest_transport_refuses_cleartext_http_credentials() {
+    use telmoni_cli::transport::{LaneRequest, ReqwestTransport, Transport};
+
+    let transport = ReqwestTransport::new().unwrap();
+    let req = LaneRequest {
+        method: reqwest::Method::GET,
+        url: "http://remote-insecure.example.com/cli/me".to_string(),
+        bearer: Some("secret-token-123".to_string()),
+        organization: None,
+        json: None,
+    };
+
+    let err = transport.send(req).await.unwrap_err();
+    assert!(
+        err.to_string().contains("refusing to send credentials over unencrypted HTTP"),
+        "expected cleartext refusal, got: {err}"
+    );
 }

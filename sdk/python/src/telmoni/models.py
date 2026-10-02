@@ -24,7 +24,7 @@ class Config:
             or DEFAULT_ENDPOINT
         )
         auth_token = os.getenv("TELMONI_API_KEY") or os.getenv("TELMONI_AUTH_TOKEN")
-        organization_id = os.getenv("TELMONI_ORG")
+        organization_id = os.getenv("TELMONI_ORGANIZATION") or os.getenv("TELMONI_ORG")
         return cls(
             endpoint=endpoint,
             auth_token=auth_token,

@@ -14,8 +14,9 @@ pub enum OrgCommand {
     List,
     /// Switch active organization context.
     Switch {
-        /// Organization ID (e.g. `org_...`).
-        org_id: String,
+        /// Organization ID (e.g. `org_...`) or name.
+        #[arg(value_name = "ORGANIZATION")]
+        organization: String,
     },
 }
 
@@ -26,11 +27,11 @@ pub async fn execute(
     store: &CredentialsStore,
 ) -> Result<()> {
     let Some(mut creds) = store.load()? else {
-        bail!("org commands need a browser session; run telmoni login");
+        bail!("organization commands need a browser session; run telmoni login");
     };
 
     if creds.auth_type != AuthType::Device {
-        bail!("org commands need a browser session; run telmoni login");
+        bail!("organization commands need a browser session; run telmoni login");
     }
 
     match cmd {
@@ -54,21 +55,22 @@ pub async fn execute(
             }
             Ok(())
         }
-        OrgCommand::Switch { org_id } => {
-            if !creds
+        OrgCommand::Switch { organization } => {
+            let matched = creds
                 .organizations
                 .iter()
-                .any(|o| o.organization_id == org_id)
-            {
-                bail!("unknown organization {org_id}; run telmoni org list");
-            }
+                .find(|o| o.organization_id == organization || o.label.eq_ignore_ascii_case(&organization));
+            let Some(target) = matched else {
+                bail!("unknown organization {organization}; run telmoni organization list");
+            };
+            let target_id = target.organization_id.clone();
 
             refresh_if_needed(transport, store, &mut creds).await?;
 
-            let me = fetch_me_for_session(transport, store, &mut creds, Some(&org_id)).await?;
+            let me = fetch_me_for_session(transport, store, &mut creds, Some(&target_id)).await?;
 
-            if me.active_organization_id.as_deref() != Some(&org_id) {
-                bail!("you are no longer in {org_id}");
+            if me.active_organization_id.as_deref() != Some(&target_id) {
+                bail!("you are no longer in {organization}");
             }
 
             creds.person = Some(StoredPerson {
@@ -94,7 +96,7 @@ pub async fn execute(
             if let Some(org) = creds
                 .organizations
                 .iter()
-                .find(|o| o.organization_id == org_id)
+                .find(|o| o.organization_id == target_id)
             {
                 println!(
                     "Active organization: {} ({}, {})",

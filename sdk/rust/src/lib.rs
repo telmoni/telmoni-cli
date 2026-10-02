@@ -45,7 +45,7 @@ impl Config {
 
     /// Loads configuration from standard environment variables:
     /// - `TELMONI_ENDPOINT` (or defaults to `https://telmoni.com`)
-    /// - `TELMONI_ORG`
+    /// - `TELMONI_ORGANIZATION` (or `TELMONI_ORG`)
     /// - `TELMONI_API_KEY`
     #[must_use]
     pub fn from_env() -> Self {
@@ -54,7 +54,7 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
-        let organization_id = std::env::var("TELMONI_ORG").ok();
+        let organization_id = std::env::var("TELMONI_ORGANIZATION").or_else(|_| std::env::var("TELMONI_ORG")).ok();
         let auth_token = std::env::var("TELMONI_API_KEY").ok();
 
         Self {

@@ -28,7 +28,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 | Variable | Read by | Used for |
 |---|---|---|
 | `TELMONI_ENDPOINT` | `main`, and clap for `login --endpoint` | The base URL at sign-in, and for a signed-out `status` |
-| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one |
+| `TELMONI_ORGANIZATION` (or `TELMONI_ORG`) | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one |
 | `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. |
 
 **Debug builds also read a `.env`** from the working directory, after the real environment. Release builds compile that out.
@@ -70,13 +70,13 @@ Blank values are skipped, and a trailing `/` is trimmed.
 | `login --key <key>` | Nothing: the key is checked for shape only | "Signed in with API key", and the endpoint | — |
 | `logout` | Refresh if needed, then the session revoke (see [auth](auth.md#signing-out)) | "Signed out", or "Not signed in" | A note when the server did not confirm |
 | `status` / `whoami [--json]` | With an API key: `GET /v1/organization`. Signed in: refresh if needed, then `/cli/me` with the active organization, rewriting the cached person and organizations. | Who and which organization, the endpoint, the token's remaining lifetime; or JSON | — |
-| `org list` | Nothing: reads the cache | One organization per line, `*` marking the active one | — |
-| `org switch <id>` | Refresh if needed, then `/cli/me` with that organization. It must come back as the active one. | The new active organization | — |
+| `organization list` (alias `org list`) | Nothing: reads the cache | One organization per line, `*` marking the active one | — |
+| `organization switch <id>` (alias `org switch`) | Refresh if needed, then `/cli/me` with that organization. It must come back as the active one. | The new active organization | — |
 | `config get` / `set` / `list` | Nothing | The value, or the listing | — |
 
 A few details the table leaves out:
 - **Signed-out `status`** prints the endpoint to stdout, then fails with a message saying how to sign in.
-- **`status` checks the answer.** With `TELMONI_ORG` set, it checks the organization against the cache before calling, and against the server's answer after. `/me` falls back to another organization when the one asked for is no longer the person's.
+- **`status` checks the answer.** With `TELMONI_ORGANIZATION` (or `TELMONI_ORG`) set, it checks the organization against the cache before calling, and against the server's answer after. `/me` falls back to another organization when the one asked for is no longer the person's.
 - **`org list` and `org switch` refuse an API key.** A key belongs to one organization.
 - **`org switch` refuses an id not in the cache** before making any request.
 
@@ -87,7 +87,7 @@ A few details the table leaves out:
 - keeps one as active in the credentials file;
 - sends it on the requests that act inside an organization.
 
-`TELMONI_ORG` overrides it for one command.
+`TELMONI_ORGANIZATION` (or `TELMONI_ORG`) overrides it for one command.
 
 **An organization's label** is its trimmed `name`, else its owner's address, else "Organization". The platform leaves a new organization unnamed, and labels it by its owner.
 
