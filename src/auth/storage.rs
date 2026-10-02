@@ -26,6 +26,16 @@ pub struct StoredPerson {
     pub display_name: Option<String>,
 }
 
+impl From<&crate::auth::device::Person> for StoredPerson {
+    fn from(person: &crate::auth::device::Person) -> Self {
+        Self {
+            user_id: person.user_id.clone(),
+            email: person.email.clone(),
+            display_name: person.display_name.clone(),
+        }
+    }
+}
+
 /// Organization summary stored in credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredOrganization {
@@ -35,6 +45,23 @@ pub struct StoredOrganization {
     pub label: String,
     /// User's role in the organization (`owner`, `admin`, `member`).
     pub role: String,
+}
+
+impl StoredOrganization {
+    /// Formats the organization summary as `<label> (<organization_id>, <role>)`.
+    pub fn display_summary(&self) -> String {
+        format!("{} ({}, {})", self.label, self.organization_id, self.role)
+    }
+}
+
+impl From<&crate::auth::device::Organization> for StoredOrganization {
+    fn from(org: &crate::auth::device::Organization) -> Self {
+        Self {
+            organization_id: org.organization_id.clone(),
+            label: org.label().to_string(),
+            role: org.role.clone(),
+        }
+    }
 }
 
 /// Locally persisted credentials.
@@ -63,6 +90,96 @@ pub struct Credentials {
     pub api_key: Option<String>,
     /// Last updated timestamp in Unix seconds.
     pub updated_at: i64,
+}
+
+impl Credentials {
+    /// Constructs a new credentials object for API key authentication.
+    pub fn for_api_key(endpoint: String, key: String) -> Self {
+        Self {
+            auth_type: AuthType::ApiKey,
+            endpoint,
+            access_token: None,
+            refresh_token: None,
+            expires_at: None,
+            session_row_id: None,
+            person: None,
+            organizations: Vec::new(),
+            active_organization_id: None,
+            api_key: Some(key),
+            updated_at: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Constructs a new credentials object from successful device authorization.
+    pub fn from_device_auth(
+        endpoint: String,
+        authn: crate::auth::device::AuthnResult,
+        me: crate::auth::device::Me,
+    ) -> Self {
+        let stored_orgs = me
+            .organizations
+            .iter()
+            .map(StoredOrganization::from)
+            .collect();
+        Self {
+            auth_type: AuthType::Device,
+            endpoint,
+            access_token: Some(authn.access_token),
+            refresh_token: authn.refresh_token,
+            expires_at: Some(chrono::Utc::now().timestamp() + authn.expires_in),
+            session_row_id: me.session_row_id,
+            person: Some(StoredPerson::from(&me.person)),
+            organizations: stored_orgs,
+            active_organization_id: me.active_organization_id,
+            api_key: None,
+            updated_at: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Updates stored person, organizations, and session row from `/cli/me`.
+    pub fn update_from_me(&mut self, me: &crate::auth::device::Me, preserve_active_org: bool) {
+        self.person = Some(StoredPerson::from(&me.person));
+        self.organizations = me
+            .organizations
+            .iter()
+            .map(StoredOrganization::from)
+            .collect();
+        if !preserve_active_org {
+            self.active_organization_id = me.active_organization_id.clone();
+        }
+        if me.session_row_id.is_some() {
+            self.session_row_id = me.session_row_id.clone();
+        }
+        self.updated_at = chrono::Utc::now().timestamp();
+    }
+
+    /// Finds an organization by its ID.
+    pub fn find_organization(&self, org_id: &str) -> Option<&StoredOrganization> {
+        self.organizations
+            .iter()
+            .find(|o| o.organization_id == org_id)
+    }
+
+    /// Returns the currently active organization record, if found.
+    pub fn active_organization(&self) -> Option<&StoredOrganization> {
+        self.active_organization_id
+            .as_deref()
+            .and_then(|id| self.find_organization(id))
+    }
+}
+
+/// Helper to print active organization according to the CLI output contract:
+/// - `<label> (<org_id>, <role>)` if known
+/// - `<org_id>` if not in list
+/// - "No organization" if none
+pub fn print_active_organization(org: Option<&StoredOrganization>, raw_id: Option<&str>) {
+    if let Some(org) = org {
+        println!("Active organization: {}", org.display_summary());
+    } else if let Some(id) = raw_id {
+        println!("Active organization: {id}");
+    } else {
+        println!("No organization");
+    }
 }
 
 /// Store for managing credentials persistence on disk.

@@ -80,53 +80,80 @@ pub fn parse_lane_error(answer: &LaneAnswer) -> LaneError {
     }
 
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&answer.body) {
-        // Shape 1: application/problem+json: { "type": string, "title": string, "status": number, "detail"?: string }
-        if let (Some(ptype), Some(title)) = (
-            val.get("type").and_then(|v| v.as_str()),
-            val.get("title").and_then(|v| v.as_str()),
-        ) {
-            let detail = val.get("detail").and_then(|v| v.as_str());
-            let message = match detail {
-                Some(d) if !d.trim().is_empty() => format!("{title}: {d}"),
-                _ => title.to_string(),
-            };
-            let retry_after_secs = val.get("retry_after_secs").and_then(|v| v.as_u64());
-            return LaneError {
-                status: answer.status,
-                problem_type: Some(ptype.to_string()),
-                message,
-                retry_after_secs,
-            };
+        if let Some(err) = parse_problem_json(&val, answer.status) {
+            return err;
         }
-
-        // Shape 2: { "error": string }
-        if let Some(err_msg) = val.get("error").and_then(|v| v.as_str()) {
-            return LaneError {
-                status: answer.status,
-                problem_type: None,
-                message: err_msg.to_string(),
-                retry_after_secs: None,
-            };
+        if let Some(err) = parse_simple_error_json(&val, answer.status) {
+            return err;
         }
     }
 
-    // Shape 3: Anything else: message is `request failed (<status>)` plus the first 200 characters of the body.
-    let snippet: String = answer.body.chars().take(200).collect();
+    parse_fallback_body(&answer.body, answer.status)
+}
+
+/// Shape 1: `application/problem+json`: `{ "type": string, "title": string, "detail"?: string }`
+fn parse_problem_json(val: &serde_json::Value, status: u16) -> Option<LaneError> {
+    let ptype = val.get("type").and_then(|v| v.as_str())?;
+    let title = val.get("title").and_then(|v| v.as_str())?;
+
+    let detail = val.get("detail").and_then(|v| v.as_str());
+    let message = match detail {
+        Some(d) if !d.trim().is_empty() => format!("{title}: {d}"),
+        _ => title.to_string(),
+    };
+    let retry_after_secs = val.get("retry_after_secs").and_then(|v| v.as_u64());
+
+    Some(LaneError {
+        status,
+        problem_type: Some(ptype.to_string()),
+        message,
+        retry_after_secs,
+    })
+}
+
+/// Shape 2: `{ "error": string }`
+fn parse_simple_error_json(val: &serde_json::Value, status: u16) -> Option<LaneError> {
+    let err_msg = val.get("error").and_then(|v| v.as_str())?;
+    Some(LaneError {
+        status,
+        problem_type: None,
+        message: err_msg.to_string(),
+        retry_after_secs: None,
+    })
+}
+
+/// Shape 3: Text snippet fallback for unstructured responses.
+fn parse_fallback_body(body: &str, status: u16) -> LaneError {
+    let snippet: String = body.chars().take(200).collect();
     let trimmed = snippet.trim();
     let message = if trimmed.is_empty() {
-        format!("request failed ({})", answer.status)
+        format!("request failed ({status})")
     } else if snippet.starts_with(' ') || snippet.starts_with(':') {
-        format!("request failed ({}){}", answer.status, snippet)
+        format!("request failed ({status}){snippet}")
     } else {
-        format!("request failed ({}) {}", answer.status, snippet)
+        format!("request failed ({status}) {snippet}")
     };
 
     LaneError {
-        status: answer.status,
+        status,
         problem_type: None,
         message,
         retry_after_secs: None,
     }
+}
+
+/// Checks if a hostname represents local loopback.
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
+}
+
+/// Checks whether a request conveys sensitive authentication credentials.
+fn request_carries_credentials(req: &LaneRequest) -> bool {
+    req.bearer.is_some()
+        || req
+            .json
+            .as_ref()
+            .is_some_and(|j| j.get("refreshToken").is_some() || j.get("deviceCode").is_some())
 }
 
 /// Production implementation of `Transport` backed by `reqwest`.
@@ -149,22 +176,12 @@ impl ReqwestTransport {
 
 impl Transport for ReqwestTransport {
     async fn send(&self, req: LaneRequest) -> anyhow::Result<LaneAnswer> {
-        let carries_credentials = req.bearer.is_some()
-            || req
-                .json
-                .as_ref()
-                .is_some_and(|j| j.get("refreshToken").is_some() || j.get("deviceCode").is_some());
-
-        if carries_credentials
+        if request_carries_credentials(&req)
             && let Ok(parsed_url) = reqwest::Url::parse(&req.url)
             && parsed_url.scheme() == "http"
         {
             let host = parsed_url.host_str().unwrap_or("");
-            let is_loopback = host == "localhost"
-                || host == "127.0.0.1"
-                || host == "::1"
-                || host.ends_with(".localhost");
-            if !is_loopback {
+            if !is_loopback_host(host) {
                 anyhow::bail!(
                     "refusing to send credentials over unencrypted HTTP to '{host}'; use HTTPS"
                 );

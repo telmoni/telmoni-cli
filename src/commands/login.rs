@@ -5,12 +5,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use clap::Args;
 
-use crate::auth::device::{
-    Organization, fetch_me, poll_once, poll_until_granted, start_device_auth,
-};
-use crate::auth::storage::{
-    AuthType, Credentials, CredentialsStore, StoredOrganization, StoredPerson,
-};
+use crate::auth::device::{fetch_me, poll_once, poll_until_granted, start_device_auth};
+use crate::auth::storage::{Credentials, CredentialsStore, print_active_organization};
 use crate::config::{Config, resolve_endpoint};
 use crate::transport::Transport;
 
@@ -52,31 +48,29 @@ pub async fn execute(
 ) -> Result<()> {
     let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config);
 
-    // 1. Programmatic API key login
     if let Some(key) = args.key {
-        validate_api_key(&key)?;
-
-        let creds = Credentials {
-            auth_type: AuthType::ApiKey,
-            endpoint: endpoint.clone(),
-            access_token: None,
-            refresh_token: None,
-            expires_at: None,
-            session_row_id: None,
-            person: None,
-            organizations: Vec::new(),
-            active_organization_id: None,
-            api_key: Some(key),
-            updated_at: chrono::Utc::now().timestamp(),
-        };
-
-        store.save(&creds)?;
-        println!("Signed in with API key");
-        println!("Endpoint: {endpoint}");
-        return Ok(());
+        return login_with_api_key(&key, endpoint, store);
     }
 
-    // 2. Interactive device authorization grant (RFC 8628)
+    login_with_device_flow(args, endpoint, transport, store).await
+}
+
+fn login_with_api_key(key: &str, endpoint: String, store: &CredentialsStore) -> Result<()> {
+    validate_api_key(key)?;
+    let creds = Credentials::for_api_key(endpoint.clone(), key.to_string());
+    store.save(&creds)?;
+
+    println!("Signed in with API key");
+    println!("Endpoint: {endpoint}");
+    Ok(())
+}
+
+async fn login_with_device_flow(
+    args: LoginArgs,
+    endpoint: String,
+    transport: &impl Transport,
+    store: &CredentialsStore,
+) -> Result<()> {
     let start = start_device_auth(transport, &endpoint).await?;
 
     println!("First copy your one-time code: {}", start.user_code);
@@ -106,56 +100,15 @@ pub async fn execute(
     )
     .await?;
 
-    // Fetch user profile and organization list
     let me = fetch_me(transport, &endpoint, &authn.access_token, None).await?;
+    let email = me.person.email.clone();
+    let raw_active_id = me.active_organization_id.clone();
 
-    let stored_orgs: Vec<StoredOrganization> = me
-        .organizations
-        .iter()
-        .map(|org: &Organization| StoredOrganization {
-            organization_id: org.organization_id.clone(),
-            label: org.label().to_string(),
-            role: org.role.clone(),
-        })
-        .collect();
-
-    let creds = Credentials {
-        auth_type: AuthType::Device,
-        endpoint,
-        access_token: Some(authn.access_token),
-        refresh_token: authn.refresh_token,
-        expires_at: Some(chrono::Utc::now().timestamp() + authn.expires_in),
-        session_row_id: me.session_row_id,
-        person: Some(StoredPerson {
-            user_id: me.person.user_id,
-            email: me.person.email.clone(),
-            display_name: me.person.display_name,
-        }),
-        organizations: stored_orgs,
-        active_organization_id: me.active_organization_id.clone(),
-        api_key: None,
-        updated_at: chrono::Utc::now().timestamp(),
-    };
-
+    let creds = Credentials::from_device_auth(endpoint, authn, me);
     store.save(&creds)?;
 
-    println!("Signed in as {}", me.person.email);
-    if let Some(active_id) = &me.active_organization_id {
-        if let Some(org) = creds
-            .organizations
-            .iter()
-            .find(|o| &o.organization_id == active_id)
-        {
-            println!(
-                "Active organization: {} ({}, {})",
-                org.label, org.organization_id, org.role
-            );
-        } else {
-            println!("Active organization: {active_id}");
-        }
-    } else {
-        println!("No organization");
-    }
+    println!("Signed in as {email}");
+    print_active_organization(creds.active_organization(), raw_active_id.as_deref());
 
     Ok(())
 }

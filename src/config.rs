@@ -15,41 +15,36 @@ pub struct Config {
     pub output_format: Option<String>,
 }
 
+/// Normalizes an endpoint string by trimming whitespace, stripping trailing slashes,
+/// and ensuring an `http://` (for localhost) or `https://` scheme.
+pub fn normalize_endpoint_url(s: &str) -> Option<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_trailing = trimmed.trim_end_matches('/');
+    if without_trailing.starts_with("http://") || without_trailing.starts_with("https://") {
+        Some(without_trailing.to_string())
+    } else if without_trailing.starts_with("localhost")
+        || without_trailing.starts_with("127.0.0.1")
+        || without_trailing.starts_with("::1")
+    {
+        Some(format!("http://{without_trailing}"))
+    } else {
+        Some(format!("https://{without_trailing}"))
+    }
+}
+
 /// The endpoint a command that holds no stored credentials talks to, in
 /// precedence order: the `--endpoint` flag, then `TELMONI_ENDPOINT` (read by
 /// `main` and passed in as `env_value`), then the config file, then the
 /// default. Pure, so it is testable; the environment is read only at the
 /// command entry point.
 pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Config) -> String {
-    let normalize = |s: &str| {
-        let trimmed = s.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        let without_trailing = trimmed.trim_end_matches('/');
-        if without_trailing.starts_with("http://") || without_trailing.starts_with("https://") {
-            Some(without_trailing.to_string())
-        } else if without_trailing.starts_with("localhost")
-            || without_trailing.starts_with("127.0.0.1")
-            || without_trailing.starts_with("::1")
-        {
-            Some(format!("http://{without_trailing}"))
-        } else {
-            Some(format!("https://{without_trailing}"))
-        }
-    };
-    if let Some(ep) = flag.and_then(normalize) {
-        return ep;
-    }
-    if let Some(ep) = env_value.and_then(normalize) {
-        return ep;
-    }
-
-    if let Some(ep) = config.endpoint.as_deref().and_then(normalize) {
-        return ep;
-    }
-
-    DEFAULT_TELMONI_ENDPOINT.to_string()
+    flag.and_then(normalize_endpoint_url)
+        .or_else(|| env_value.and_then(normalize_endpoint_url))
+        .or_else(|| config.endpoint.as_deref().and_then(normalize_endpoint_url))
+        .unwrap_or_else(|| DEFAULT_TELMONI_ENDPOINT.to_string())
 }
 
 /// Returns the base directory for Telmoni configuration and state.

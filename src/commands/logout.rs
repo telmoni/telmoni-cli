@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use clap::Args;
 
 use crate::auth::device::{fetch_me, refresh_tokens, revoke_session};
-use crate::auth::storage::{AuthType, CredentialsStore};
+use crate::auth::storage::{AuthType, Credentials, CredentialsStore};
 use crate::transport::{LaneError, Transport};
 
 /// Arguments for `telmoni logout`.
@@ -31,98 +31,132 @@ pub async fn execute(
             Ok(())
         }
         AuthType::Device => {
-            if let Some(ref env_org) = telmoni_org_env
-                && !creds
-                    .organizations
-                    .iter()
-                    .any(|o| &o.organization_id == env_org)
-            {
-                bail!("TELMONI_ORG names an organization you are not in");
-            }
-
-            // The server requires the header of anyone in an organization,
-            // and `/me` names an active one whenever the list is non-empty,
-            // so the stored active organization is always the right value.
-            let active_org_for_revoke = if let Some(ref env_org) = telmoni_org_env {
-                Some(env_org.as_str())
-            } else {
-                creds.active_organization_id.as_deref()
-            };
-
-            let org_header = if !creds.organizations.is_empty() {
-                active_org_for_revoke.or_else(|| {
-                    creds
-                        .organizations
-                        .first()
-                        .map(|o| o.organization_id.as_str())
-                })
-            } else {
-                None
-            };
-
-            let mut skip_revoke = false;
-            let now_ts = chrono::Utc::now().timestamp();
-            if let Some(exp) = creds.expires_at
-                && now_ts >= exp - 60
-                && let Some(ref rt) = creds.refresh_token
-            {
-                match refresh_tokens(
-                    transport,
-                    &creds.endpoint,
-                    rt,
-                    creds.session_row_id.as_deref(),
-                )
-                .await
-                {
-                    Ok(authn) => {
-                        creds.access_token = Some(authn.access_token);
-                    }
-                    Err(err) => {
-                        if let Some(lane_err) = err.downcast_ref::<LaneError>()
-                            && lane_err.status == 401
-                        {
-                            skip_revoke = true;
-                        }
-                    }
-                }
-            }
-
-            if !skip_revoke
-                && let (Some(token), Some(row_id)) = (&creds.access_token, &creds.session_row_id)
-            {
-                let mut ended =
-                    revoke_session(transport, &creds.endpoint, token, row_id, org_header).await;
-                // The cached organization list can be stale, and the server
-                // refuses a revoke that names an organization the person has
-                // left (403) or names none while they belong to one (400).
-                // `/me` says which one to name now.
-                if lane_status(&ended).is_some_and(|s| s == 400 || s == 403)
-                    && let Ok(me) = fetch_me(transport, &creds.endpoint, token, None).await
-                {
-                    ended = revoke_session(
-                        transport,
-                        &creds.endpoint,
-                        token,
-                        row_id,
-                        me.active_organization_id.as_deref(),
-                    )
-                    .await;
-                }
-                // A 401 means the session was already ended elsewhere.
-                if lane_status(&ended) != Some(401)
-                    && let Err(err) = ended
-                {
-                    eprintln!(
-                        "note: the server did not confirm the sign-out ({err}); \
-                         end the session from Active sessions in the console"
-                    );
-                }
-            }
-
-            let _ = store.clear();
-            println!("Signed out");
-            Ok(())
+            execute_device_logout(transport, store, &mut creds, telmoni_org_env).await
         }
+    }
+}
+
+async fn execute_device_logout(
+    transport: &impl Transport,
+    store: &CredentialsStore,
+    creds: &mut Credentials,
+    telmoni_org_env: Option<String>,
+) -> Result<()> {
+    validate_env_org(creds, telmoni_org_env.as_deref())?;
+
+    let skip_revoke = refresh_token_if_expiring(transport, creds).await;
+
+    if !skip_revoke
+        && let (Some(token), Some(row_id)) = (&creds.access_token, &creds.session_row_id)
+    {
+        let org_header = resolve_revoke_org_header(creds, telmoni_org_env.as_deref());
+        revoke_with_org_fallback(
+            transport,
+            &creds.endpoint,
+            token,
+            row_id,
+            org_header.as_deref(),
+        )
+        .await;
+    }
+
+    let _ = store.clear();
+    println!("Signed out");
+    Ok(())
+}
+
+fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
+    if let Some(target) = env_org
+        && !creds
+            .organizations
+            .iter()
+            .any(|o| o.organization_id == target)
+    {
+        bail!("TELMONI_ORG names an organization you are not in");
+    }
+    Ok(())
+}
+
+fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Option<String> {
+    if creds.organizations.is_empty() {
+        return None;
+    }
+
+    env_org
+        .map(ToString::to_string)
+        .or_else(|| creds.active_organization_id.clone())
+        .or_else(|| {
+            creds
+                .organizations
+                .first()
+                .map(|o| o.organization_id.clone())
+        })
+}
+
+async fn refresh_token_if_expiring(transport: &impl Transport, creds: &mut Credentials) -> bool {
+    let now_ts = chrono::Utc::now().timestamp();
+    let is_expiring = creds.expires_at.is_some_and(|exp| now_ts >= exp - 60);
+
+    if !is_expiring {
+        return false;
+    }
+
+    let Some(ref rt) = creds.refresh_token else {
+        return false;
+    };
+
+    match refresh_tokens(
+        transport,
+        &creds.endpoint,
+        rt,
+        creds.session_row_id.as_deref(),
+    )
+    .await
+    {
+        Ok(authn) => {
+            creds.access_token = Some(authn.access_token);
+            false
+        }
+        Err(err) => err
+            .downcast_ref::<LaneError>()
+            .is_some_and(|lane_err| lane_err.status == 401),
+    }
+}
+
+async fn revoke_with_org_fallback(
+    transport: &impl Transport,
+    endpoint: &str,
+    token: &str,
+    row_id: &str,
+    initial_org_header: Option<&str>,
+) {
+    let mut ended = revoke_session(transport, endpoint, token, row_id, initial_org_header).await;
+
+    // The cached organization list can be stale, and the server
+    // refuses a revoke that names an organization the person has
+    // left (403) or names none while they belong to one (400).
+    // `/me` says which one to name now.
+    if lane_status(&ended).is_some_and(|s| s == 400 || s == 403)
+        && let Ok(me) = fetch_me(transport, endpoint, token, None).await
+    {
+        ended = revoke_session(
+            transport,
+            endpoint,
+            token,
+            row_id,
+            me.active_organization_id.as_deref(),
+        )
+        .await;
+    }
+
+    // A 401 means the session was already ended elsewhere.
+    if lane_status(&ended) != Some(401)
+        && let Err(err) = ended
+    {
+        eprintln!(
+            "note: the server did not confirm the sign-out ({err}); \
+             end the session from Active sessions in the console"
+        );
     }
 }
 
