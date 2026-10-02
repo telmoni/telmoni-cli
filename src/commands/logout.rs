@@ -114,7 +114,7 @@ async fn refresh_token_if_expiring(transport: &impl Transport, creds: &mut Crede
     .await
     {
         Ok(authn) => {
-            creds.access_token = Some(authn.access_token);
+            creds.apply_refresh(&authn);
             false
         }
         Err(err) => err

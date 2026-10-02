@@ -124,6 +124,41 @@ fn env_var(key: &str) -> Option<String> {
         .or_else(|| dotenv_var(key))
 }
 
+/// Unquotes a single or double-quoted value and strips surrounding whitespace.
+#[cfg(debug_assertions)]
+fn unquote(value: &str) -> &str {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+        })
+        .unwrap_or(trimmed)
+        .trim()
+}
+
+/// Parses a single `.env` line looking for `target_key`.
+#[cfg(debug_assertions)]
+fn parse_dotenv_line(line: &str, target_key: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let (key, value) = trimmed.split_once('=')?;
+    if key.trim() != target_key {
+        return None;
+    }
+    let unquoted = unquote(value);
+    if unquoted.is_empty() {
+        None
+    } else {
+        Some(unquoted.to_string())
+    }
+}
+
 /// `.env` in the working directory serves `cargo run` from the repository
 /// root and is compiled out of release builds: a released binary run inside
 /// someone else's checkout would otherwise take that checkout's endpoint and
@@ -131,27 +166,9 @@ fn env_var(key: &str) -> Option<String> {
 #[cfg(debug_assertions)]
 fn dotenv_var(key: &str) -> Option<String> {
     let content = std::fs::read_to_string(".env").ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = trimmed.split_once('=')
-            && k.trim() == key
-        {
-            let v = v.trim();
-            let unquoted = v
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                .unwrap_or(v)
-                .trim();
-            if !unquoted.is_empty() {
-                return Some(unquoted.to_string());
-            }
-        }
-    }
-    None
+    content
+        .lines()
+        .find_map(|line| parse_dotenv_line(line, key))
 }
 
 #[cfg(not(debug_assertions))]

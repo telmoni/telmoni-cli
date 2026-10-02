@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::storage::{Credentials, CredentialsStore};
-use crate::transport::{LaneError, LaneRequest, Transport, parse_lane_error};
+use crate::transport::{LaneAnswer, LaneError, LaneRequest, Transport, parse_lane_error};
 
 /// Response from `POST /cli/auth/device`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -175,39 +175,49 @@ pub async fn poll_once(
     };
 
     let answer = transport.send(req).await?;
-    if answer.status == 200 {
-        let authn: AuthnResult = serde_json::from_str(&answer.body)
-            .context("decoding authorization result from poll")?;
-        return Ok(PollOutcome::Granted(authn));
-    }
+    parse_poll_answer(&answer)
+}
 
-    if answer.status == 202 {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&answer.body)
-            && val.get("status").and_then(|v| v.as_str()) == Some("slow_down")
-        {
-            return Ok(PollOutcome::SlowDown);
+/// Decodes the HTTP status code and response payload of a device poll answer.
+fn parse_poll_answer(answer: &LaneAnswer) -> Result<PollOutcome> {
+    match answer.status {
+        200 => {
+            let authn: AuthnResult = serde_json::from_str(&answer.body)
+                .context("decoding authorization result from poll")?;
+            Ok(PollOutcome::Granted(authn))
         }
-        return Ok(PollOutcome::Pending);
-    }
-
-    let lane_err = parse_lane_error(&answer);
-    if answer.status == 401 {
-        return Ok(PollOutcome::Failed(
+        202 => {
+            let is_slow_down = serde_json::from_str::<serde_json::Value>(&answer.body)
+                .ok()
+                .and_then(|v| {
+                    v.get("status")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s == "slow_down")
+                })
+                .unwrap_or(false);
+            if is_slow_down {
+                Ok(PollOutcome::SlowDown)
+            } else {
+                Ok(PollOutcome::Pending)
+            }
+        }
+        401 => Ok(PollOutcome::Failed(
             "the device code is no longer valid; run telmoni login again".to_string(),
-        ));
-    }
-    if answer.status == 426 {
-        return Ok(PollOutcome::Failed(
+        )),
+        426 => Ok(PollOutcome::Failed(
             "this CLI is too old; upgrade it".to_string(),
-        ));
+        )),
+        429 => {
+            let lane_err = parse_lane_error(answer);
+            Ok(PollOutcome::RateLimited {
+                retry_after_secs: lane_err.retry_after_secs,
+            })
+        }
+        _ => {
+            let lane_err = parse_lane_error(answer);
+            Ok(PollOutcome::Failed(lane_err.message))
+        }
     }
-    if answer.status == 429 {
-        return Ok(PollOutcome::RateLimited {
-            retry_after_secs: lane_err.retry_after_secs,
-        });
-    }
-
-    Ok(PollOutcome::Failed(lane_err.message))
 }
 
 /// Injectable poll loop implementing exact RFC 8628 backoff and error handling.
@@ -406,12 +416,7 @@ fn apply_refresh(
     creds: &mut Credentials,
     authn: AuthnResult,
 ) -> Result<()> {
-    creds.access_token = Some(authn.access_token);
-    if let Some(new_rt) = authn.refresh_token {
-        creds.refresh_token = Some(new_rt);
-    }
-    creds.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
-    creds.updated_at = chrono::Utc::now().timestamp();
+    creds.apply_refresh(&authn);
     store.save(creds)
 }
 

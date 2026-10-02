@@ -153,6 +153,16 @@ impl Credentials {
         self.updated_at = chrono::Utc::now().timestamp();
     }
 
+    /// Applies refreshed authentication tokens.
+    pub fn apply_refresh(&mut self, authn: &crate::auth::device::AuthnResult) {
+        self.access_token = Some(authn.access_token.clone());
+        if let Some(ref new_rt) = authn.refresh_token {
+            self.refresh_token = Some(new_rt.clone());
+        }
+        self.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
+        self.updated_at = chrono::Utc::now().timestamp();
+    }
+
     /// Finds an organization by its ID.
     pub fn find_organization(&self, org_id: &str) -> Option<&StoredOrganization> {
         self.organizations
