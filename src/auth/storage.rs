@@ -41,6 +41,8 @@ impl From<&crate::auth::device::Person> for StoredPerson {
 pub struct StoredOrganization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
+    /// The slug the console's paths name it by, as `/cli/me` last answered.
+    pub slug: String,
     /// Organization human-readable label.
     pub label: String,
     /// User's role in the organization (`owner`, `admin`, `member`).
@@ -58,6 +60,7 @@ impl From<&crate::auth::device::Organization> for StoredOrganization {
     fn from(org: &crate::auth::device::Organization) -> Self {
         Self {
             organization_id: org.organization_id.clone(),
+            slug: org.slug.clone(),
             label: org.label().to_string(),
             role: org.role.clone(),
         }
@@ -168,6 +171,19 @@ impl Credentials {
         self.organizations
             .iter()
             .find(|o| o.organization_id == org_id)
+    }
+
+    /// The cached organization an id or a slug names. The two never look
+    /// alike: a slug has no underscore, and an id always has one. A slug is
+    /// the one `/cli/me` last answered, so a rename since is not known here.
+    ///
+    /// ⚠ Exactly, like an id. A slug is lowercase, and read loosely `Acme`
+    /// would pick the organization at `/acme` out of two that are both
+    /// called Acme, where a name must be refused as ambiguous.
+    pub fn organization_named(&self, identifier: &str) -> Option<&StoredOrganization> {
+        self.organizations
+            .iter()
+            .find(|o| o.organization_id == identifier || o.slug == identifier)
     }
 
     /// Returns the currently active organization record, if found.

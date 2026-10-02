@@ -67,10 +67,7 @@ async fn execute_device_logout(
 
 fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
     if let Some(target) = env_org
-        && !creds
-            .organizations
-            .iter()
-            .any(|o| o.organization_id == target)
+        && creds.organization_named(target).is_none()
     {
         bail!("TELMONI_ORG names an organization you are not in");
     }
@@ -82,8 +79,10 @@ fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Opti
         return None;
     }
 
+    // The header takes the id, whichever of the two the environment gave.
     env_org
-        .map(ToString::to_string)
+        .and_then(|target| creds.organization_named(target))
+        .map(|named| named.organization_id.clone())
         .or_else(|| creds.active_organization_id.clone())
         .or_else(|| {
             creds

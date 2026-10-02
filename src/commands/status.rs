@@ -90,7 +90,7 @@ async fn execute_device(
     // `/me` acts in the oldest organization when the one asked for is
     // no longer the person's, so the cached list's say-so is not enough.
     if let Some(env_org) = telmoni_org_env.as_deref()
-        && me.active_organization_id.as_deref() != Some(env_org)
+        && me.active_organization_id != active_org_id
     {
         bail!("you are no longer in {env_org}");
     }
@@ -112,19 +112,17 @@ async fn execute_device(
     Ok(())
 }
 
+/// The id of the organization to act in: the one the environment names, by
+/// id or slug, else the stored active one.
 fn resolve_device_active_org(
     creds: &Credentials,
     telmoni_org_env: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(env_org) = telmoni_org_env {
-        if !creds
-            .organizations
-            .iter()
-            .any(|o| o.organization_id == env_org)
-        {
+        let Some(named) = creds.organization_named(env_org) else {
             bail!("TELMONI_ORG names an organization you are not in");
-        }
-        Ok(Some(env_org.to_string()))
+        };
+        Ok(Some(named.organization_id.clone()))
     } else {
         Ok(creds.active_organization_id.clone())
     }
@@ -140,6 +138,7 @@ fn print_device_json(
         .map(|o| {
             json!({
                 "organizationId": o.organization_id,
+                "slug": o.slug,
                 "label": o.label,
                 "role": o.role,
             })

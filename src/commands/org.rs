@@ -14,7 +14,7 @@ pub enum OrgCommand {
     List,
     /// Switch active organization context.
     Switch {
-        /// Organization ID (e.g. `org_...`) or name.
+        /// Organization ID (e.g. `org_...`), slug (as in the console's URL) or name.
         #[arg(value_name = "ORGANIZATION")]
         organization: String,
     },
@@ -64,8 +64,8 @@ fn execute_list(creds: &Credentials) {
             ' '
         };
         println!(
-            "{marker} {}  {}  {}",
-            org.organization_id, org.label, org.role
+            "{marker} {}  {}  {}  {}",
+            org.organization_id, org.slug, org.label, org.role
         );
     }
 }
@@ -76,7 +76,7 @@ async fn execute_switch(
     transport: &impl Transport,
     store: &CredentialsStore,
 ) -> Result<()> {
-    let target = resolve_target_org(&creds.organizations, organization)?;
+    let target = resolve_target_org(creds, organization)?;
     let target_id = target.organization_id.clone();
 
     refresh_if_needed(transport, store, creds).await?;
@@ -97,15 +97,18 @@ async fn execute_switch(
     Ok(())
 }
 
+/// The cached organization `identifier` names: by id or slug, which name
+/// one, else by label, which may name several.
 fn resolve_target_org<'a>(
-    orgs: &'a [StoredOrganization],
+    creds: &'a Credentials,
     identifier: &str,
 ) -> Result<&'a StoredOrganization> {
-    if let Some(by_id) = orgs.iter().find(|o| o.organization_id == identifier) {
-        return Ok(by_id);
+    if let Some(named) = creds.organization_named(identifier) {
+        return Ok(named);
     }
 
-    let matching: Vec<_> = orgs
+    let matching: Vec<_> = creds
+        .organizations
         .iter()
         .filter(|o| o.label.eq_ignore_ascii_case(identifier))
         .collect();
@@ -116,10 +119,10 @@ fn resolve_target_org<'a>(
         multiple => {
             let ids: Vec<String> = multiple
                 .iter()
-                .map(|o| format!("{} ({})", o.organization_id, o.role))
+                .map(|o| format!("{} / {} ({})", o.slug, o.organization_id, o.role))
                 .collect();
             bail!(
-                "multiple organizations named '{identifier}': {}; specify by organization ID",
+                "multiple organizations named '{identifier}': {}; specify by slug or organization ID",
                 ids.join(", ")
             );
         }

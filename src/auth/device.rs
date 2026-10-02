@@ -73,6 +73,9 @@ pub struct Person {
 pub struct Organization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
+    /// The slug the console's paths name it by (`/{slug}`). It follows the
+    /// name, so a rename moves it; only the id names the organization.
+    pub slug: String,
     /// Organization name.
     pub name: Option<String>,
     /// Owner email address.

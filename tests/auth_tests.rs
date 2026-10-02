@@ -120,6 +120,7 @@ fn test_credentials_round_trip() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
+            slug: "acme-corp".to_string(),
             label: "Acme Corp".to_string(),
             role: "owner".to_string(),
         }],
@@ -618,6 +619,7 @@ async fn test_refresh_if_needed() {
 fn test_organization_label_fallback() {
     let org_with_name = Organization {
         organization_id: "org_1".to_string(),
+        slug: "org-1".to_string(),
         name: Some("Acme Corp".to_string()),
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
@@ -627,6 +629,7 @@ fn test_organization_label_fallback() {
 
     let org_with_empty_name = Organization {
         organization_id: "org_2".to_string(),
+        slug: "org-2".to_string(),
         name: Some("   ".to_string()),
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
@@ -636,6 +639,7 @@ fn test_organization_label_fallback() {
 
     let org_without_name = Organization {
         organization_id: "org_3".to_string(),
+        slug: "org-3".to_string(),
         name: None,
         owner_email: Some("owner@example.com".to_string()),
         owner_display_name: None,
@@ -645,6 +649,7 @@ fn test_organization_label_fallback() {
 
     let org_without_owner = Organization {
         organization_id: "org_4".to_string(),
+        slug: "org-4".to_string(),
         name: None,
         owner_email: None,
         owner_display_name: None,
@@ -676,11 +681,13 @@ async fn test_org_switch_logic() {
         organizations: vec![
             StoredOrganization {
                 organization_id: "org_1".to_string(),
+                slug: "org-one".to_string(),
                 label: "Org One".to_string(),
                 role: "owner".to_string(),
             },
             StoredOrganization {
                 organization_id: "org_2".to_string(),
+                slug: "org-two".to_string(),
                 label: "Org Two".to_string(),
                 role: "member".to_string(),
             },
@@ -719,11 +726,13 @@ async fn test_org_switch_logic() {
             "organizations": [
                 {
                     "organizationId": "org_1",
+                    "slug": "org-one",
                     "name": "Org One",
                     "role": "owner"
                 },
                 {
                     "organizationId": "org_2",
+                    "slug": "org-two",
                     "name": "Org Two",
                     "role": "member"
                 }
@@ -762,6 +771,7 @@ async fn test_org_switch_logic() {
             "organizations": [
                 {
                     "organizationId": "org_1",
+                    "slug": "org-one",
                     "name": "Org One",
                     "role": "owner"
                 }
@@ -805,6 +815,7 @@ async fn test_logout_outcomes() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
+            slug: "acme".to_string(),
             label: "Acme".to_string(),
             role: "owner".to_string(),
         }],
@@ -845,6 +856,7 @@ async fn test_logout_outcomes() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
+            slug: "acme".to_string(),
             label: "Acme".to_string(),
             role: "owner".to_string(),
         }],
@@ -1008,6 +1020,7 @@ async fn test_telmoni_org_env_validation() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_allowed".to_string(),
+            slug: "allowed-org".to_string(),
             label: "Allowed Org".to_string(),
             role: "owner".to_string(),
         }],
@@ -1074,6 +1087,7 @@ async fn test_status_updates_cached_credentials() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
+            slug: "org-old".to_string(),
             label: "Org Old".to_string(),
             role: "member".to_string(),
         }],
@@ -1095,11 +1109,13 @@ async fn test_status_updates_cached_credentials() {
             "organizations": [
                 {
                     "organizationId": "org_1",
+                    "slug": "acme-corp",
                     "name": "Acme Corp",
                     "role": "admin"
                 },
                 {
                     "organizationId": "org_2",
+                    "slug": "beta-labs",
                     "name": "Beta Labs",
                     "role": "owner"
                 }
@@ -1127,6 +1143,9 @@ async fn test_status_updates_cached_credentials() {
     );
     assert_eq!(updated.organizations.len(), 2);
     assert_eq!(updated.organizations[0].label, "Acme Corp");
+    // A rename moves the slug with the name; the id stays.
+    assert_eq!(updated.organizations[0].organization_id, "org_1");
+    assert_eq!(updated.organizations[0].slug, "acme-corp");
     assert_eq!(updated.organizations[0].role, "admin");
     assert_eq!(updated.organizations[1].label, "Beta Labs");
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
@@ -1156,6 +1175,7 @@ async fn test_status_retries_on_token_expired() {
         }),
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
+            slug: "org-one".to_string(),
             label: "Org One".to_string(),
             role: "owner".to_string(),
         }],
@@ -1193,6 +1213,7 @@ async fn test_status_retries_on_token_expired() {
             "organizations": [
                 {
                     "organizationId": "org_1",
+                    "slug": "org-one",
                     "name": "Org One",
                     "role": "owner"
                 }
@@ -1237,6 +1258,7 @@ async fn test_organization_wire_shape() {
         "organizations": [
             {
                 "organizationId": "org_alpha",
+                "slug": "org-alpha",
                 "name": "Org Alpha",
                 "ownerEmail": "user@org.test",
                 "ownerDisplayName": null,
@@ -1258,6 +1280,7 @@ async fn test_organization_wire_shape() {
     assert_eq!(me.person.user_id, "usr_org_1");
     assert_eq!(me.organizations.len(), 1);
     assert_eq!(me.organizations[0].organization_id, "org_alpha");
+    assert_eq!(me.organizations[0].slug, "org-alpha");
     assert_eq!(me.organizations[0].label(), "Org Alpha");
     assert_eq!(me.active_organization_id.as_deref(), Some("org_alpha"));
 
@@ -1286,6 +1309,11 @@ async fn test_organization_wire_shape() {
     assert_eq!(reqs[0].url, "https://telmoni.com/v1/organization");
 }
 
+/// The slug a fixture organization goes by: its id, as a slug would spell it.
+fn slug_of(id: &str) -> String {
+    id.replace('_', "-")
+}
+
 fn device_creds(orgs: &[&str], active: &str) -> Credentials {
     Credentials {
         auth_type: AuthType::Device,
@@ -1303,6 +1331,7 @@ fn device_creds(orgs: &[&str], active: &str) -> Credentials {
             .iter()
             .map(|id| StoredOrganization {
                 organization_id: (*id).to_string(),
+                slug: slug_of(id),
                 label: (*id).to_string(),
                 role: "member".to_string(),
             })
@@ -1382,8 +1411,8 @@ async fn test_org_switch_session_401s() {
         r#"{
             "person": { "userId": "usr_1", "email": "alice@example.com" },
             "organizations": [
-                { "organizationId": "org_1", "name": "One", "role": "owner" },
-                { "organizationId": "org_2", "name": "Two", "role": "member" }
+                { "organizationId": "org_1", "slug": "one", "name": "One", "role": "owner" },
+                { "organizationId": "org_2", "slug": "two", "name": "Two", "role": "member" }
             ],
             "activeOrganizationId": "org_2",
             "sessionRowId": "0192a3b4-1111"
@@ -1420,7 +1449,7 @@ async fn test_status_telmoni_org_left_since_cached() {
         200,
         r#"{
             "person": { "userId": "usr_1", "email": "alice@example.com" },
-            "organizations": [ { "organizationId": "org_1", "name": "One", "role": "owner" } ],
+            "organizations": [ { "organizationId": "org_1", "slug": "one", "name": "One", "role": "owner" } ],
             "activeOrganizationId": "org_1",
             "sessionRowId": "0192a3b4-1111"
         }"#,
@@ -1459,7 +1488,7 @@ async fn test_logout_retries_revoke_with_current_organization() {
         200,
         r#"{
             "person": { "userId": "usr_1", "email": "alice@example.com" },
-            "organizations": [ { "organizationId": "org_now", "name": "Now", "role": "member" } ],
+            "organizations": [ { "organizationId": "org_now", "slug": "now", "name": "Now", "role": "member" } ],
             "activeOrganizationId": "org_now",
             "sessionRowId": "0192a3b4-1111"
         }"#,
@@ -1583,11 +1612,13 @@ async fn test_org_switch_duplicate_label_disambiguation() {
         organizations: vec![
             StoredOrganization {
                 organization_id: "org_alpha".to_string(),
+                slug: "acme".to_string(),
                 label: "Acme".to_string(),
                 role: "owner".to_string(),
             },
             StoredOrganization {
                 organization_id: "org_beta".to_string(),
+                slug: "acme-2".to_string(),
                 label: "Acme".to_string(),
                 role: "member".to_string(),
             },
@@ -1598,7 +1629,8 @@ async fn test_org_switch_duplicate_label_disambiguation() {
     };
     store.save(&creds).unwrap();
 
-    // Switching by label "Acme" when two orgs share it should fail and prompt to use ID
+    // Switching by label "Acme" when two orgs share it should fail and prompt to use ID.
+    // One of them is at `/acme`: a slug is matched exactly, so the name is still ambiguous.
     let err = org::execute(
         org::OrgCommand::Switch {
             organization: "Acme".to_string(),
@@ -1616,6 +1648,9 @@ async fn test_org_switch_duplicate_label_disambiguation() {
     );
     assert!(err.to_string().contains("org_alpha (owner)"));
     assert!(err.to_string().contains("org_beta (member)"));
+    // Each is listed with its slug, which names it alone.
+    assert!(err.to_string().contains("acme / org_alpha (owner)"));
+    assert!(err.to_string().contains("acme-2 / org_beta (member)"));
 
     // Switching by explicit ID works without ambiguity
     transport.push_answer(
@@ -1623,8 +1658,8 @@ async fn test_org_switch_duplicate_label_disambiguation() {
         r#"{
             "person": { "userId": "usr_1", "email": "bob@example.com" },
             "organizations": [
-                { "organizationId": "org_alpha", "name": "Acme", "role": "owner" },
-                { "organizationId": "org_beta", "name": "Acme", "role": "member" }
+                { "organizationId": "org_alpha", "slug": "acme", "name": "Acme", "role": "owner" },
+                { "organizationId": "org_beta", "slug": "acme-2", "name": "Acme", "role": "member" }
             ],
             "activeOrganizationId": "org_beta"
         }"#,
@@ -1642,6 +1677,172 @@ async fn test_org_switch_duplicate_label_disambiguation() {
 
     let updated = store.load().unwrap().unwrap();
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_beta"));
+}
+
+// 22. A slug names an organization wherever an id does: `org switch`, and
+//     TELMONI_ORGANIZATION on status and logout. It is what the console's
+//     URL shows; the wire still carries the id.
+#[tokio::test]
+async fn test_organization_named_by_slug() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    // The helper's organizations go by `org-1` and `org-2`.
+    store
+        .save(&device_creds(&["org_1", "org_2"], "org_1"))
+        .unwrap();
+
+    let me_acting_in = |active: &str| {
+        format!(
+            r#"{{
+                "person": {{ "userId": "usr_1", "email": "alice@example.com" }},
+                "organizations": [
+                    {{ "organizationId": "org_1", "slug": "org-1", "name": "One", "role": "owner" }},
+                    {{ "organizationId": "org_2", "slug": "org-2", "name": "Two", "role": "member" }}
+                ],
+                "activeOrganizationId": "{active}",
+                "sessionRowId": "0192a3b4-1111"
+            }}"#
+        )
+    };
+
+    // 22a. org switch by slug
+    transport.push_answer(200, me_acting_in("org_2"));
+    org::execute(
+        org::OrgCommand::Switch {
+            organization: "org-2".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .unwrap()
+            .active_organization_id
+            .as_deref(),
+        Some("org_2")
+    );
+
+    // 22b. status under a slug acts in it for the one command, and keeps the
+    //      stored active organization
+    transport.push_answer(200, me_acting_in("org_1"));
+    status::execute(
+        status::StatusArgs { json: true },
+        &transport,
+        &store,
+        &Config::default(),
+        Some("org-1".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .unwrap()
+            .active_organization_id
+            .as_deref(),
+        Some("org_2")
+    );
+
+    // 22c. the server's answer is held to the id the slug named, not to the
+    //      slug's text: `/me` fell back, so the person has left it since
+    transport.push_answer(200, me_acting_in("org_2"));
+    let left = status::execute(
+        status::StatusArgs { json: false },
+        &transport,
+        &store,
+        &Config::default(),
+        Some("org-1".to_string()),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(left.to_string(), "you are no longer in org-1");
+
+    // 22d. logout under a slug names its id on the revoke
+    transport.push_answer(204, "");
+    logout::execute(
+        logout::LogoutArgs {},
+        &transport,
+        &store,
+        Some("org-1".to_string()),
+    )
+    .await
+    .unwrap();
+
+    let reqs = transport.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 4);
+    for (request, organization) in reqs.iter().zip(["org_2", "org_1", "org_1", "org_1"]) {
+        assert_eq!(request.organization.as_deref(), Some(organization));
+    }
+    assert!(reqs[3].url.ends_with("/revoke"));
+    assert!(!store.path.exists());
+}
+
+// 23. A slug names one organization and a label may name several, so the slug
+//     is read first: an organization called "acme" does not shadow the one
+//     whose URL is /acme. A slug the cache does not hold is unknown, and
+//     costs no request.
+#[tokio::test]
+async fn test_org_switch_slug_before_label() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+
+    let mut creds = device_creds(&["org_a", "org_b"], "org_b");
+    creds.organizations[0].slug = "acme".to_string();
+    creds.organizations[0].label = "Acme Robotics".to_string();
+    creds.organizations[1].slug = "acme-2".to_string();
+    creds.organizations[1].label = "acme".to_string();
+    store.save(&creds).unwrap();
+
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [
+                { "organizationId": "org_a", "slug": "acme", "name": "Acme Robotics", "role": "member" },
+                { "organizationId": "org_b", "slug": "acme-2", "name": "acme", "role": "member" }
+            ],
+            "activeOrganizationId": "org_a",
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+    org::execute(
+        org::OrgCommand::Switch {
+            organization: "acme".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transport.requests.lock().unwrap()[0]
+            .organization
+            .as_deref(),
+        Some("org_a")
+    );
+
+    // Renamed in the console since the cache was written: its old slug.
+    let err = org::execute(
+        org::OrgCommand::Switch {
+            organization: "acme-labs".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("unknown organization acme-labs"));
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
 }
 
 #[test]
