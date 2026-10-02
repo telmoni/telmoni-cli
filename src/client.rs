@@ -19,6 +19,9 @@ pub struct V1Owner {
 pub struct V1Organization {
     /// Organization identifier (`org_...`).
     pub organization_id: String,
+    /// The slug the console's paths name it by (`/{slug}`). It follows the
+    /// name, so a rename moves it; only the id names the organization.
+    pub slug: String,
     /// Organization name.
     pub name: Option<String>,
     /// Organization owner details.

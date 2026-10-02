@@ -60,6 +60,7 @@ async fn execute_api_key(
             "endpoint": creds.endpoint,
             "organization": {
                 "organizationId": org.organization_id,
+                "slug": org.slug,
                 "label": org.label(),
             }
         });

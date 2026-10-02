@@ -974,6 +974,7 @@ async fn test_api_key_login_and_status() {
         200,
         r#"{
             "organization_id": "org_api_1",
+            "slug": "api-org",
             "name": "API Org",
             "owner": { "email": "owner@api.com", "display_name": "API Owner" }
         }"#,
@@ -1290,6 +1291,7 @@ async fn test_organization_wire_shape() {
         200,
         r#"{
         "organization_id": "org_public",
+        "slug": "public-org",
         "name": "Public Org",
         "owner": {
             "email": "lead@org.test",
@@ -1302,6 +1304,7 @@ async fn test_organization_wire_shape() {
         .await
         .unwrap();
     assert_eq!(org.organization_id, "org_public");
+    assert_eq!(org.slug, "public-org");
     assert_eq!(org.label(), "Public Org");
 
     let reqs = transport.requests.lock().unwrap();
