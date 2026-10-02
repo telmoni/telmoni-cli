@@ -84,13 +84,14 @@ List organizations your account belongs to:
 telmoni org list
 ```
 
-Switch your active organization context:
+Switch your active organization context, by its ID, its slug (the first segment of its console URL) or its name:
 
 ```console
 telmoni org switch org_xxxxxxxxxxxx
+telmoni org switch acme-robotics
 ```
 
-You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`.
+You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug.
 
 ### 4. Log Out
 
@@ -127,7 +128,7 @@ telmoni config get endpoint
 |---|---|
 | `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
 | `TELMONI_API_KEY` | Direct API key for CLI operations / CI |
-| `TELMONI_ORG` | Organization ID override for `status`, `whoami`, and `logout` |
+| `TELMONI_ORG` | Organization override (ID or slug) for `status`, `whoami`, and `logout` |
 
 ---
 

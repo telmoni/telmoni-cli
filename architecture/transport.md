@@ -33,7 +33,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 - **`User-Agent: telmoni-cli/<version> (<os>; <arch>)`**, set on the client, so it is on every request. The platform records it on the session, and the person sees "Telmoni CLI (macOS)" on their Sessions page.
 - **`Authorization: Bearer …`** on `/cli/me` and the session revoke (the access token), and on `/v1` (the API key). The device flow's start and poll, and the refresh, carry none; the refresh token travels in the body.
-- **`x-organization-id`** when the call acts inside an organization: `status`'s and `org switch`'s `/cli/me`, and the session revoke.
+- **`x-organization-id`** when the call acts inside an organization: `status`'s and `org switch`'s `/cli/me`, and the session revoke. It always carries the id, however the person named the organization (see [commands](commands.md#organizations)).
   - Calls that do not send it: login's first `/cli/me`, logout's fallback `/cli/me`, `/v1` (an API key is its organization), and a revoke when no organization is cached.
   - The door forwards the header only on lanes that carry a bearer.
 - **JSON bodies, in camel case.** The door converts the refresh body to the platform's snake case, and re-encodes every body through its own schema, so only known fields cross.
@@ -54,7 +54,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 ## The /v1 client
 
 `src/client.rs` is the CLI's only `/v1` call: `GET {endpoint}/v1/organization`, with the API key as the bearer.
-- The answer is the platform's snake-case organization: its id, its name, and its owner, or none.
+- The answer is the platform's snake-case organization: its id, its slug, its name, and its owner, or none.
 - The platform checks the key on every request: live, its organization active, the public API switched on.
 - The console's `/v1` relay allows only `GET` and `HEAD`, and meters each key and each source address.
 

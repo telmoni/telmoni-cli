@@ -36,6 +36,8 @@ Each one strips a trailing `/` from the endpoint, so a request path can always b
 
 Each SDK defaults to `https://telmoni.com`, the same base URL as the CLI's `DEFAULT_TELMONI_ENDPOINT` (`src/config.rs`). Each reads `TELMONI_ENDPOINT`, `TELMONI_API_KEY` and `TELMONI_ORG` from the environment, as the CLI does.
 
+⚠ **An SDK takes the organization as an id.** The CLI also accepts a slug there, because it has a cached `/cli/me` to resolve one against. An SDK has no session, and holds whatever the variable says.
+
 They are not yet uniform at the edges:
 
 | Behaviour | Rust | TypeScript | Go | Python |

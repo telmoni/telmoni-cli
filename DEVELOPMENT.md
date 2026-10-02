@@ -10,7 +10,7 @@ How to set up, run and check the CLI and SDKs locally. How they are built is des
 |---|---|
 | `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
 | `TELMONI_API_KEY` | An API key for `telmoni login`; the CLI keeps it in the credentials file |
-| `TELMONI_ORG` | Organization ID override for `status`, `whoami`, and `logout` |
+| `TELMONI_ORG` | Organization override (ID or slug) for `status`, `whoami`, and `logout` |
 
 A debug build (`cargo run`) also reads these from `.env` in the working directory; release builds never read `.env`.
 
