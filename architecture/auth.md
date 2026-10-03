@@ -52,7 +52,7 @@ sequenceDiagram
    - a short user code, shown as `XXXX-XXXX`;
    - the console's `/auth/device` page, as a plain URL and as one carrying the code;
    - the code's lifetime and the polling interval.
-2. **Show it.** The user code and the plain URL go to stdout. The CLI tries to open the URL carrying the code in a browser, unless `--no-browser` is given. A failure there is a note on stderr, never an error.
+2. **Show it.** The user code and the plain URL go to stdout. The CLI tries to open the URL carrying the code in a browser (the plain URL, if the platform sent no such one), unless `--no-browser` is given. A failure there is a note on stderr, never an error.
    - ⚠ **Nothing depends on the browser reaching this machine.** The CLI runs over SSH, in containers and on hosts with no browser. That is why it uses the device flow and not a loopback redirect. There is no listener and no PKCE (AGENTS.md).
 3. **Poll** (`poll_until_granted`). Each round sleeps first, then checks the code's lifetime on the local clock, then polls:
 
@@ -60,7 +60,7 @@ sequenceDiagram
    |---|---|
    | 202, pending | Waits another interval |
    | 202, `slow_down` | Adds 5 s to the interval, for the rest of this login |
-   | 429 | Waits the problem's `retry_after_secs` once, then carries on |
+   | 429 | Waits the problem's `retry_after_secs` once, or the interval if that is longer, then carries on |
    | 200 | Has its tokens |
    | 403 | Stops: the sign-in was denied in the console |
    | 400 | Stops: the code expired before it was approved |
@@ -141,7 +141,7 @@ The door has no sign-out lane of its own, so the CLI signs out through the same 
 ## API keys
 
 `telmoni login --key telmoni_…`, or the `TELMONI_API_KEY` variable at login:
-- **Checking it.** The key must start with `telmoni_` and contain no whitespace. Nothing calls the platform to check it.
+- **Checking it.** The key must start with `telmoni_`, have something after it, and contain no whitespace. Nothing calls the platform to check it.
 - **Storing it.** It is kept in the credentials file as `api_key`, with the endpoint. `TELMONI_API_KEY` is read only by `login`, not by later commands.
 - **Using it.** It opens only `{endpoint}/v1` reads, never `/cli` (AGENTS.md). Today only `status` uses it, through `GET /v1/organization` (see [transport](transport.md#the-v1-client)).
 
@@ -158,6 +158,8 @@ These are differences between the CLI's code and the platform's, found by readin
 | Only `token-expired` is refreshed | Once the retention sweep deletes the expired bearer's row, the answer becomes "unknown token" | With a skewed local clock that skips the early refresh, the CLI deletes a session that refreshing would have saved |
 | `slow_down` adds 5 s for good | The interval never grows. The check compares the database's clock with the process's. | Harmless: the CLI just polls more slowly |
 | 426 means "upgrade the CLI" | Nothing produces a 426 yet | None today |
+| A 404 on revoke is "already gone" | The door answers 404 for a session id that is not a UUID, before any hop | A credentials file whose `session_row_id` is malformed signs out locally with no note, and the session stays live. `/me` always answers a UUID, so only a hand-edited file gets there |
+| A slug is matched exactly | The console redirects a slug typed with a capital to the slug | `org switch Acme` is unknown; `acme` is the slug. Deliberate: a slug is lowercase, and loosening the match is a step towards the name, which is not a name here |
 | A comment calls the access token a JWT | The bearer is an opaque secret | None: nothing reads it |
 
 ## Where it lives

@@ -128,7 +128,7 @@ telmoni config get endpoint
 |---|---|
 | `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
 | `TELMONI_API_KEY` | Direct API key for CLI operations / CI |
-| `TELMONI_ORG` | Organization override (ID or slug) for `status`, `whoami`, and `logout` |
+| `TELMONI_ORG` | Organization override for `status`, `whoami`, and `logout`: its ID, or its slug when typed by hand. Scripts carry the ID; a rename moves the slug. |
 
 ---
 

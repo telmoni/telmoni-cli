@@ -37,6 +37,8 @@ Each one strips a trailing `/` from the endpoint, so a request path can always b
 Each SDK defaults to `https://telmoni.com`, the same base URL as the CLI's `DEFAULT_TELMONI_ENDPOINT` (`src/config.rs`). Each reads `TELMONI_ENDPOINT`, `TELMONI_API_KEY` and `TELMONI_ORG` from the environment, as the CLI does.
 
 ⚠ **An SDK takes the organization as an id.** The CLI also accepts a slug there, because it has a cached `/cli/me` to resolve one against. An SDK has no session, and holds whatever the variable says.
+- **Nothing sends it today, and `/v1` could not take it.** `/v1` names no organization anywhere: a token is its organization, and the console's `/v1` relay forwards only `authorization`, `accept`, `content-type` and `content-length`. The field waits for a lane that takes one.
+- **Where the platform does read `x-organization-id`** (the person lanes behind the `/cli` door), the door refuses a value that is not an organization id before auth sees it: `400` `/errors/bad-request`, "x-organization-id is not an organization id". Auth's `/me` alone would read such a value as absent and answer the person's own organization, so a slug sent there by mistake would have acted elsewhere.
 
 They are not yet uniform at the edges:
 
@@ -47,7 +49,7 @@ They are not yet uniform at the edges:
 | An empty `TELMONI_ENDPOINT` falls back to the default | no | yes | yes | yes |
 | An empty endpoint passed explicitly falls back to the default | no | yes | yes | no |
 
-When an SDK grows a client, these should converge on the CLI's rules first. The CLI reads only the three `TELMONI_*` variables, and treats an empty or whitespace endpoint as unset.
+When an SDK grows a client, these should converge on the CLI's rules first. The CLI reads only the `TELMONI_*` variables named in [commands](commands.md#the-environment-at-the-edge), and treats an empty or whitespace endpoint as unset.
 
 ## What the tests pin
 

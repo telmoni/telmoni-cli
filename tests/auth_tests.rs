@@ -454,6 +454,43 @@ async fn test_poll_until_granted_scenarios() {
         );
     }
 
+    // Scenario 3b: a 429 asking for less than the interval still waits the
+    // interval, which is the least the server allows between polls
+    {
+        let outcomes = Arc::new(Mutex::new(VecDeque::from([
+            PollOutcome::RateLimited {
+                retry_after_secs: Some(2),
+            },
+            PollOutcome::Granted(dummy_authn.clone()),
+        ])));
+        let sleeps = Arc::new(Mutex::new(Vec::new()));
+        let s_clone = sleeps.clone();
+        let o_clone = outcomes.clone();
+
+        let _ = poll_until_granted(
+            Duration::from_secs(5),
+            Duration::from_secs(120),
+            move || {
+                let o = o_clone.clone();
+                async move { Ok(o.lock().unwrap().pop_front().unwrap()) }
+            },
+            |dur| {
+                let s = s_clone.clone();
+                async move {
+                    s.lock().unwrap().push(dur);
+                }
+            },
+            Instant::now,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *sleeps.lock().unwrap(),
+            vec![Duration::from_secs(5), Duration::from_secs(5)]
+        );
+    }
+
     // Scenario 4: a 403 ending the loop
     {
         let sleeps = Arc::new(Mutex::new(Vec::new()));

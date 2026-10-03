@@ -74,6 +74,9 @@ fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// The server requires the header of anyone in an organization, and `/me`
+/// names an active one whenever the list is non-empty, so the stored active
+/// organization is always the right value when the environment names none.
 fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Option<String> {
     if creds.organizations.is_empty() {
         return None;
