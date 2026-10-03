@@ -70,8 +70,10 @@ TARGET="${OS}-${ARCH}"
 case "$TARGET" in
     macos-aarch64) ;;
     linux-x86_64)  ;;
-    macos-x86_64)  error "Intel macOS (x86_64) is not a prebuilt target. Build from source: cargo install --locked telmoni-cli" ;;
-    linux-aarch64) error "Linux ARM64 is not a prebuilt target yet. Build from source: cargo install --locked telmoni-cli" ;;
+    # From git, by package: the crate is not on crates.io, where the bare name
+    # would install whatever someone else publishes under it.
+    macos-x86_64)  error "Intel macOS (x86_64) is not a prebuilt target. Build from source: cargo install --git https://github.com/telmoni/telmoni-cli.git --locked telmoni-cli" ;;
+    linux-aarch64) error "Linux ARM64 is not a prebuilt target yet. Build from source: cargo install --git https://github.com/telmoni/telmoni-cli.git --locked telmoni-cli" ;;
     *)             error "Unsupported target platform: $TARGET" ;;
 esac
 
