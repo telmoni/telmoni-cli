@@ -47,21 +47,22 @@ pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Co
         .unwrap_or_else(|| DEFAULT_TELMONI_ENDPOINT.to_string())
 }
 
-/// Returns the base directory for Telmoni configuration and state.
-/// Defaults to `dirs::config_dir()`, falling back to the current directory (`.`)
-/// in headless or minimal container environments where `$HOME` is not set.
-pub fn base_config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
 /// Returns the path to `~/.config/telmoni/config.json`.
+///
+/// ⚠ Never a path under the working directory. The file names the endpoint
+/// `login` signs in against, so a checkout the CLI is run in could send the
+/// sign-in, and the API key after it, to a host of its choosing.
 pub fn config_path() -> Result<PathBuf> {
-    Ok(base_config_dir().join("telmoni").join("config.json"))
+    let base_dir = dirs::config_dir().context("resolving user config directory")?;
+    Ok(base_dir.join("telmoni").join("config.json"))
 }
 
 /// Loads configuration from disk, returning default if file does not exist.
 pub fn load_config() -> Result<Config> {
-    let path = config_path()?;
+    // A machine with no configuration directory has no configuration file.
+    let Ok(path) = config_path() else {
+        return Ok(Config::default());
+    };
     if !path.exists() {
         return Ok(Config::default());
     }

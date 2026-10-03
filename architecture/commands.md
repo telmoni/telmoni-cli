@@ -17,9 +17,9 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 `main` (`src/main.rs`) runs in this order:
 
 1. **Parse the command line** with clap. The global `-v` switches the stderr log filter to debug. There are no `tracing` calls in `src/` yet, so it changes nothing today.
-2. **Resolve the credentials path:** `dirs::config_dir()/telmoni/credentials.json` (falling back to `./telmoni/credentials.json` if no user config directory is resolved).
+2. **Resolve the credentials path:** `dirs::config_dir()/telmoni/credentials.json`. With no user config directory the CLI says so on stderr and exits 1, whatever the command: it never keeps credentials under the working directory.
 3. **Build the HTTP transport** (see [transport](transport.md)).
-4. **Read the configuration file.** A malformed file emits a note on stderr and becomes the default.
+4. **Read the configuration file.** A malformed file emits a note on stderr and becomes the default. A missing one is the default without a note.
 5. **Read the environment** (below), and dispatch.
 6. **On error**, print it to stderr and exit 1. Only the outermost context is printed, so a network failure reads "transport send failed for `<url>`", without its cause.
 
@@ -51,6 +51,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 
 - `telmoni config set` checks the key, not the value.
 - The file is written with a plain write, not atomically and with the default file mode. It holds no secret.
+- ⚠ **It is never read from the working directory.** It names the endpoint `login` signs in against, so a checkout the CLI is run in could send the sign-in, and the API key after it, to a host of its choosing. Nor is the credentials file kept there (see [startup](#startup)), which a login would leave in the checkout or CI workspace.
 
 **Where the base URL comes from** (`resolve_endpoint`), first match wins:
 1. `--endpoint`, which clap also fills from `TELMONI_ENDPOINT`;

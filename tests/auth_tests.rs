@@ -1915,14 +1915,3 @@ async fn test_org_switch_slug_before_label() {
     assert!(err.to_string().contains("unknown organization acme-labs"));
     assert_eq!(transport.requests.lock().unwrap().len(), 1);
 }
-
-#[test]
-fn test_base_config_dir_fallback() {
-    use telmoni_cli::config::{base_config_dir, config_path};
-
-    let base = base_config_dir();
-    assert!(!base.as_os_str().is_empty());
-
-    let path = config_path().unwrap();
-    assert!(path.ends_with("telmoni/config.json"));
-}

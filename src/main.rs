@@ -7,7 +7,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use telmoni_cli::auth::CredentialsStore;
 use telmoni_cli::commands::{config_cmd, login, logout, org, status};
-use telmoni_cli::config::{Config, base_config_dir, load_config};
+use telmoni_cli::config::{Config, load_config};
 use telmoni_cli::transport::ReqwestTransport;
 
 #[derive(Parser)]
@@ -64,7 +64,14 @@ async fn main() {
         .with_writer(std::io::stderr)
         .try_init();
 
-    let creds_path = base_config_dir().join("telmoni").join("credentials.json");
+    // ⚠ Never a path under the working directory, as for the config file: a
+    // login there would leave the refresh token or the API key in whatever
+    // checkout or CI workspace the CLI was run in.
+    let Some(config_dir) = dirs::config_dir() else {
+        eprintln!("no configuration directory to keep the credentials file in; set HOME");
+        std::process::exit(1);
+    };
+    let creds_path = config_dir.join("telmoni").join("credentials.json");
     let store = CredentialsStore::new(creds_path);
 
     let transport = match ReqwestTransport::new() {
