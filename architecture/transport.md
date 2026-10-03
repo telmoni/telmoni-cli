@@ -27,6 +27,11 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 **TLS** is rustls with bundled web PKI roots, not the operating system's trust store. The CLI trusts the same roots on every machine.
 
+⚠ **Plain HTTP reaches only this machine** (`refuse_cleartext`). The real transport refuses an `http://` URL before anything is sent, unless its host is `localhost`, a name under it, or a loopback address (`127.0.0.0/8`, `[::1]`).
+- **It does not ask what the request carries.** Every lane sends a credential or is answered one: the device start sends none, and is answered the device code. Judged request by request, a login against a plain-HTTP host printed a code and opened a browser before its first poll was refused.
+- **The host is read from the parsed URL.** An IPv6 address comes in brackets, and `localhost.example.com` is not this machine.
+- So `http://localhost:3000` works, and a plain-HTTP endpoint anywhere else fails at its first request. That includes a local platform reached by another name, from inside a container for one.
+
 **There is no client-side timeout.** The client sets only its user agent, and `reqwest` defaults to none. The console's door cuts its own hop to the platform's server at its upstream timeout, but a stalled connection to the console itself would wait indefinitely.
 
 ## What every request carries
@@ -71,6 +76,6 @@ A `/v1` error never touches the credentials file. An API key's validity is the p
 
 | Concern | File |
 |---|---|
-| The seam, the real transport, error shapes | `src/transport.rs` |
+| The seam, the real transport, the plain-HTTP refusal, error shapes | `src/transport.rs` |
 | The `/v1` client | `src/client.rs` |
 | The platform's side | `telmoni/telmoni`: `web/app/cli/[...path]/route.ts` (the `/cli` door), `web/app/v1/[...path]/route.ts` (the `/v1` relay), `crates/auth/src/handler/v1.rs` |

@@ -36,7 +36,7 @@ Why it is built this way:
 
 `tests/auth_tests.rs` is the CLI's suite. It holds mock-based tests, with no network and no sleeps.
 
-- **HTTP is injected** through the `Transport` trait (see [transport](transport.md)). `MockTransport` answers from a queue of scripted responses and records every request. An unexpected request is an error, and "no network" is asserted as zero requests made.
+- **HTTP is injected** through the `Transport` trait (see [transport](transport.md)). `MockTransport` answers from a queue of scripted responses and records every request. An unexpected request is an error, and "no network" is asserted as zero requests made. The three tests that build the real transport only check that it refuses plain HTTP, which it does before opening a connection.
 - **The poll loop's sleep and clock are injected as closures.** A device-flow poll runs in microseconds, and the tests record the durations it asked to sleep. The wall clock is not injected: refresh decisions read the real time, and tests set expiries relative to it.
 - **The credentials path is a value**, so tests write under `std::env::temp_dir()`, never to the person's real configuration directory.
 - **The environment is passed in as arguments**, never set.

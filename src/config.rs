@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::transport::is_loopback_host;
+
 /// Default Telmoni API endpoint.
 pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://telmoni.com";
 
@@ -16,23 +18,21 @@ pub struct Config {
 }
 
 /// Normalizes an endpoint string by trimming whitespace, stripping trailing slashes,
-/// and ensuring an `http://` (for localhost) or `https://` scheme.
-pub fn normalize_endpoint_url(s: &str) -> Option<String> {
-    let trimmed = s.trim();
+/// and ensuring an `http://` (for this machine) or `https://` scheme.
+fn normalize_endpoint_url(s: &str) -> Option<String> {
+    let trimmed = s.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return None;
     }
-    let without_trailing = trimmed.trim_end_matches('/');
-    if without_trailing.starts_with("http://") || without_trailing.starts_with("https://") {
-        Some(without_trailing.to_string())
-    } else if without_trailing.starts_with("localhost")
-        || without_trailing.starts_with("127.0.0.1")
-        || without_trailing.starts_with("::1")
-    {
-        Some(format!("http://{without_trailing}"))
-    } else {
-        Some(format!("https://{without_trailing}"))
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
     }
+    // The host is parsed out, not read off the front of the string:
+    // `localhost.example.com` starts with `localhost` and is not this machine.
+    let local = reqwest::Url::parse(&format!("http://{trimmed}"))
+        .is_ok_and(|url| url.host_str().is_some_and(is_loopback_host));
+    let scheme = if local { "http" } else { "https" };
+    Some(format!("{scheme}://{trimmed}"))
 }
 
 /// The endpoint a command that holds no stored credentials talks to, in

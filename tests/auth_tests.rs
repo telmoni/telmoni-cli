@@ -923,6 +923,24 @@ fn test_endpoint_precedence() {
         resolve_endpoint(Some("127.0.0.1:8080"), None, &Config::default()),
         "http://127.0.0.1:8080"
     );
+    assert_eq!(
+        resolve_endpoint(Some("[::1]:3000"), None, &Config::default()),
+        "http://[::1]:3000"
+    );
+    // A bare host gets plain HTTP only when it is this machine, not when its
+    // name merely starts like one that is.
+    assert_eq!(
+        resolve_endpoint(Some("localhost.example.com"), None, &Config::default()),
+        "https://localhost.example.com"
+    );
+    assert_eq!(
+        resolve_endpoint(Some("127.0.0.1.example.com"), None, &Config::default()),
+        "https://127.0.0.1.example.com"
+    );
+    assert_eq!(
+        resolve_endpoint(Some(" / "), Some("https://env.example"), &Config::default()),
+        "https://env.example"
+    );
 }
 
 // 10. API key validation
@@ -1590,6 +1608,56 @@ async fn test_reqwest_transport_refuses_cleartext_http_tokens_in_json() {
             .contains("refusing to send credentials over unencrypted HTTP"),
         "expected cleartext refusal for refresh token in json, got: {err}"
     );
+}
+
+// The device start sends no credential and is answered one, the device code.
+// Refused like the rest, a login stops before it prints a code or opens a
+// browser, not at its first poll.
+#[tokio::test]
+async fn test_reqwest_transport_refuses_cleartext_http_device_start() {
+    use telmoni_cli::transport::{LaneRequest, ReqwestTransport, Transport};
+
+    let transport = ReqwestTransport::new().unwrap();
+    let req = LaneRequest {
+        method: reqwest::Method::POST,
+        url: "http://remote-insecure.example.com/cli/auth/device".to_string(),
+        bearer: None,
+        organization: None,
+        json: None,
+    };
+
+    let err = transport.send(req).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("refusing to send credentials over unencrypted HTTP"),
+        "expected cleartext refusal for the device start, got: {err}"
+    );
+}
+
+// Plain HTTP reaches this machine and nothing else. Which hosts are this
+// machine is read from the parsed URL: an IPv6 address comes in brackets, and
+// a name that starts with `localhost` need not be it.
+#[test]
+fn test_cleartext_http_only_to_this_machine() {
+    use telmoni_cli::transport::refuse_cleartext;
+
+    for allowed in [
+        "https://telmoni.com/cli/me",
+        "http://localhost:3000/cli/me",
+        "http://app.localhost:3000/cli/me",
+        "http://127.0.0.1:3000/cli/me",
+        "http://[::1]:3000/cli/me",
+    ] {
+        assert!(refuse_cleartext(allowed).is_ok(), "{allowed}");
+    }
+    for refused in [
+        "http://telmoni.com/cli/me",
+        "http://localhost.example.com/cli/me",
+        "http://127.0.0.1.example.com/cli/me",
+        "http://192.168.1.10:3000/cli/me",
+    ] {
+        assert!(refuse_cleartext(refused).is_err(), "{refused}");
+    }
 }
 
 #[tokio::test]

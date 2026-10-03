@@ -142,18 +142,33 @@ fn parse_fallback_body(body: &str, status: u16) -> LaneError {
     }
 }
 
-/// Checks if a hostname represents local loopback.
-fn is_loopback_host(host: &str) -> bool {
-    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
+/// Whether `host`, as `Url::host_str` spells it, is this machine: `localhost`,
+/// a name under it, or a loopback address. An IPv6 address comes in brackets.
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    match bare.parse::<std::net::IpAddr>() {
+        Ok(address) => address.is_loopback(),
+        Err(_) => host == "localhost" || host.ends_with(".localhost"),
+    }
 }
 
-/// Checks whether a request conveys sensitive authentication credentials.
-fn request_carries_credentials(req: &LaneRequest) -> bool {
-    req.bearer.is_some()
-        || req
-            .json
-            .as_ref()
-            .is_some_and(|j| j.get("refreshToken").is_some() || j.get("deviceCode").is_some())
+/// ⚠ Plain HTTP reaches only this machine, whatever the request carries.
+/// Every lane either sends a credential or is answered one: the device
+/// start sends none and is answered the device code. Judged by its own
+/// contents, that request would cross in the clear, and `login` would print
+/// a code and open a browser before its first poll was refused.
+pub fn refuse_cleartext(url: &str) -> anyhow::Result<()> {
+    if let Ok(parsed) = reqwest::Url::parse(url)
+        && parsed.scheme() == "http"
+    {
+        let host = parsed.host_str().unwrap_or_default();
+        if !is_loopback_host(host) {
+            anyhow::bail!(
+                "refusing to send credentials over unencrypted HTTP to '{host}'; use HTTPS"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Production implementation of `Transport` backed by `reqwest`.
@@ -176,17 +191,7 @@ impl ReqwestTransport {
 
 impl Transport for ReqwestTransport {
     async fn send(&self, req: LaneRequest) -> anyhow::Result<LaneAnswer> {
-        if request_carries_credentials(&req)
-            && let Ok(parsed_url) = reqwest::Url::parse(&req.url)
-            && parsed_url.scheme() == "http"
-        {
-            let host = parsed_url.host_str().unwrap_or("");
-            if !is_loopback_host(host) {
-                anyhow::bail!(
-                    "refusing to send credentials over unencrypted HTTP to '{host}'; use HTTPS"
-                );
-            }
-        }
+        refuse_cleartext(&req.url)?;
 
         let mut builder = self.client.request(req.method, &req.url);
         if let Some(token) = req.bearer {

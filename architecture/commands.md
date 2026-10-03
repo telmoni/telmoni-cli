@@ -58,7 +58,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 3. the configuration file's `endpoint`;
 4. `DEFAULT_TELMONI_ENDPOINT`, `https://telmoni.com`.
 
-Blank values are skipped, a trailing `/` is trimmed, and a missing scheme defaults to `http://` for localhost/loopback or `https://` otherwise.
+Blank values are skipped and a trailing `/` is trimmed. A value with no scheme gets `https://`, or `http://` when its host is this machine, by the same test the transport applies (see [transport](transport.md#the-seam)).
 
 ⚠ **Only `login`, and a signed-out `status`, resolve the endpoint.** Every other command uses the endpoint recorded in the credentials file at sign-in. A session belongs to the platform that issued it.
 
