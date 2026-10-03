@@ -29,8 +29,12 @@ pub async fn execute(
     endpoint_env: Option<String>,
 ) -> Result<()> {
     let Some(mut creds) = store.load()? else {
-        let endpoint = crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config);
-        println!("Endpoint: {endpoint}");
+        // A script that asked for JSON reads stdout as JSON: it gets that or
+        // nothing, and the refusal on stderr.
+        if !args.json {
+            let endpoint = crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config);
+            println!("Endpoint: {endpoint}");
+        }
         bail!("Not signed in. Run telmoni login, or telmoni login --key <API key>.");
     };
 

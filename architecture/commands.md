@@ -76,7 +76,7 @@ Blank values are skipped and a trailing `/` is trimmed. A value with no scheme g
 | `config get` / `set` / `list` | Nothing | The value, or the listing | — |
 
 A few details the table leaves out:
-- **Signed-out `status`** prints the endpoint to stdout, then fails with a message saying how to sign in.
+- **Signed-out `status`** prints the endpoint to stdout, then fails with a message saying how to sign in. With `--json` it prints nothing to stdout: a script reading JSON gets that or nothing, and the refusal on stderr.
 - **`status` checks the answer.** With `TELMONI_ORG` set, it checks the organization against the cache before calling, and against the server's answer after: that the server acted in it, and that the answer's list still gives it that name. `/me` falls back to another organization when the one asked for is no longer the person's.
 - **`org list` and `org switch` refuse an API key.** A key belongs to one organization.
 - **`org switch` takes an id or a slug**, never a label, and refuses one the cache does not hold before making any request. It checks the answer as `status` does.
