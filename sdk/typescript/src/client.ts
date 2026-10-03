@@ -21,14 +21,14 @@ export class Telmoni {
    * Initializes a Telmoni client automatically from environment variables:
    * - `TELMONI_ENDPOINT` / `TELMONI_API_URL`
    * - `TELMONI_API_KEY` / `TELMONI_AUTH_TOKEN`
-   * - `TELMONI_ORGANIZATION` / `TELMONI_ORG`
+   * - `TELMONI_ORG`
    */
   public static fromEnv(): Telmoni {
     const env = typeof process !== 'undefined' ? process.env : undefined;
 
     const endpoint = env?.['TELMONI_ENDPOINT'] || env?.['TELMONI_API_URL'] || DEFAULT_ENDPOINT;
     const apiKey = env?.['TELMONI_API_KEY'] || env?.['TELMONI_AUTH_TOKEN'];
-    const organizationId = env?.['TELMONI_ORGANIZATION'] || env?.['TELMONI_ORG'];
+    const organizationId = env?.['TELMONI_ORG'];
 
     return new Telmoni({
       endpoint,

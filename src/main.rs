@@ -40,8 +40,8 @@ enum Cmd {
     Whoami(status::StatusArgs),
 
     /// Manage organization contexts.
-    #[command(subcommand, alias = "org")]
-    Organization(org::OrgCommand),
+    #[command(subcommand)]
+    Org(org::OrgCommand),
 
     /// Manage local CLI configuration.
     Config(config_cmd::ConfigArgs),
@@ -91,7 +91,7 @@ async fn main() {
     };
     // The environment is read here and nowhere else, so every library
     // function takes values and can be tested without touching it.
-    let telmoni_org_env = env_var("TELMONI_ORGANIZATION").or_else(|| env_var("TELMONI_ORG"));
+    let telmoni_org_env = env_var("TELMONI_ORG");
     let endpoint_env = env_var("TELMONI_ENDPOINT");
 
     let res = match cli.cmd {
@@ -113,7 +113,7 @@ async fn main() {
             )
             .await
         }
-        Cmd::Organization(cmd) => org::execute(cmd, &transport, &store).await,
+        Cmd::Org(cmd) => org::execute(cmd, &transport, &store).await,
         Cmd::Config(args) => config_cmd::execute(args),
     };
 

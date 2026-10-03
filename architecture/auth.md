@@ -130,7 +130,7 @@ Ending a session from the Sessions page in the console therefore signs the CLI o
 `telmoni logout` (`src/commands/logout.rs`):
 
 1. **An API key, or a file that can't be read:** delete the file. There is nothing on the server to end.
-2. **Choose the organization header.** The revoke lane is audited on an organization, and the platform requires the header from anyone who belongs to one. The CLI uses `TELMONI_ORGANIZATION` (or legacy `TELMONI_ORG`), else the stored active organization, else the first stored one. The variable names one by id or slug, and the header carries its id. If it names an organization not in the cache, it stops here, and keeps the file.
+2. **Choose the organization header.** The revoke lane is audited on an organization, and the platform requires the header from anyone who belongs to one. The CLI uses `TELMONI_ORG`, else the stored active organization, else the first stored one. The variable names one by id or slug, and the header carries its id. If it names an organization not in the cache, it stops here, and keeps the file.
 3. **Refresh first**, if the token expires within 60 seconds.
 4. **Revoke.** `POST /cli/sessions/{sessionRowId}/revoke`. A 204, or a 404 (already gone), is success.
 5. **On a 400 or 403**, the cached organization may be stale. The CLI asks `/cli/me` without a header and retries with the organization it answers.

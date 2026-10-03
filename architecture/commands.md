@@ -28,7 +28,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 | Variable | Read by | Used for |
 |---|---|---|
 | `TELMONI_ENDPOINT` | `main`, and clap for `login --endpoint` | The base URL at sign-in, and for a signed-out `status` |
-| `TELMONI_ORGANIZATION` (or `TELMONI_ORG`) | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug |
+| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a rename moves the slug, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
 | `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. |
 
 **Debug builds also read a `.env`** from the working directory, after the real environment. Release builds compile that out.
