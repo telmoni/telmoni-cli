@@ -221,16 +221,18 @@ impl CredentialsStore {
         Self { path }
     }
 
-    /// Loads the saved credentials, if any. A missing, unreadable or
-    /// unparseable file reads as not signed in.
+    /// Loads the saved credentials, if any. A missing file reads as not
+    /// signed in; one that is there but cannot be read says so on stderr
+    /// first, since the person did sign in once and has to again.
     pub fn load(&self) -> Result<Option<Credentials>> {
         if !self.path.exists() {
             return Ok(None);
         }
-        let Ok(content) = std::fs::read_to_string(&self.path) else {
-            return Ok(None);
-        };
-        let Ok(creds) = serde_json::from_str::<Credentials>(&content) else {
+        let readable = std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Credentials>(&content).ok());
+        let Some(creds) = readable else {
+            eprintln!("note: the saved credentials cannot be read; sign in again");
             return Ok(None);
         };
 

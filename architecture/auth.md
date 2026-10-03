@@ -82,7 +82,7 @@ Signing in again overwrites the file without revoking the earlier session, which
 - for an API key: the key;
 - `updated_at`.
 
-**Reading it.** A missing, unreadable or unparseable file reads as signed out, silently. A file missing what its kind needs (a device sign-in with no token, an API key sign-in with no key) also reads as signed out, with a note on stderr.
+**Reading it.** A missing file reads as signed out, silently. A file that is there but cannot be read or parsed also reads as signed out, with a note on stderr saying to sign in again; so does one missing what its kind needs (a device sign-in with no token, an API key sign-in with no key). Nothing else is said of the file: no "corrupt", and never its contents. There is no migration of an older shape (AGENTS.md): a file written before a field became required, such as `slug`, is one of these, and `logout` deletes it without a revoke, since nothing in it can be used.
 
 **Writing it is atomic** (`save`):
 1. Write to a sibling temporary file, opened `create_new` with mode `0600`.
