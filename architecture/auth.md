@@ -101,7 +101,7 @@ Directories get `0700` only when the CLI creates them; an existing directory is 
 - at sign-in;
 - after every refresh;
 - by `status`, which refreshes the cached person and organizations;
-- by `org switch`.
+- by `org switch`, once `/cli/me` has answered, whether or not the switch then goes through (see [commands](commands.md#organizations)).
 
 ## Refresh
 

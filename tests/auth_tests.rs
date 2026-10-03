@@ -1660,8 +1660,12 @@ fn test_cleartext_http_only_to_this_machine() {
     }
 }
 
+// 21. A label is not a name: `org switch` takes an id or a slug, and a label
+//     is unknown even when one organization alone carries it. Two called
+//     Acme, one at /acme: "Acme" is refused before any request, "acme" is
+//     the slug and names the one at /acme, and the id names either.
 #[tokio::test]
-async fn test_org_switch_duplicate_label_disambiguation() {
+async fn test_org_switch_takes_no_label() {
     use telmoni_cli::auth::storage::{AuthType, Credentials, StoredOrganization, StoredPerson};
     use telmoni_cli::commands::org;
 
@@ -1700,8 +1704,6 @@ async fn test_org_switch_duplicate_label_disambiguation() {
     };
     store.save(&creds).unwrap();
 
-    // Switching by label "Acme" when two orgs share it should fail and prompt to use ID.
-    // One of them is at `/acme`: a slug is matched exactly, so the name is still ambiguous.
     let err = org::execute(
         org::OrgCommand::Switch {
             organization: "Acme".to_string(),
@@ -1711,19 +1713,12 @@ async fn test_org_switch_duplicate_label_disambiguation() {
     )
     .await
     .unwrap_err();
-
-    assert!(
-        err.to_string()
-            .contains("multiple organizations named 'Acme'"),
-        "expected disambiguation error, got: {err}"
+    assert_eq!(
+        err.to_string(),
+        "unknown organization Acme; run telmoni org list"
     );
-    assert!(err.to_string().contains("org_alpha (owner)"));
-    assert!(err.to_string().contains("org_beta (member)"));
-    // Each is listed with its slug, which names it alone.
-    assert!(err.to_string().contains("acme / org_alpha (owner)"));
-    assert!(err.to_string().contains("acme-2 / org_beta (member)"));
+    assert_eq!(transport.requests.lock().unwrap().len(), 0);
 
-    // Switching by explicit ID works without ambiguity
     transport.push_answer(
         200,
         r#"{
@@ -1745,14 +1740,36 @@ async fn test_org_switch_duplicate_label_disambiguation() {
     )
     .await
     .unwrap();
-
     let updated = store.load().unwrap().unwrap();
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_beta"));
+
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "bob@example.com" },
+            "organizations": [
+                { "organizationId": "org_alpha", "slug": "acme", "name": "Acme", "role": "owner" },
+                { "organizationId": "org_beta", "slug": "acme-2", "name": "Acme", "role": "member" }
+            ],
+            "activeOrganizationId": "org_alpha"
+        }"#,
+    );
+    org::execute(
+        org::OrgCommand::Switch {
+            organization: "acme".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap();
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_alpha"));
 }
 
 // 22. A slug names an organization wherever an id does: `org switch`, and
-//     TELMONI_ORGANIZATION on status and logout. It is what the console's
-//     URL shows; the wire still carries the id.
+//     TELMONI_ORG on status and logout. It is what the console's URL shows;
+//     the wire still carries the id.
 #[tokio::test]
 async fn test_organization_named_by_slug() {
     use telmoni_cli::commands::status;
@@ -1858,60 +1875,122 @@ async fn test_organization_named_by_slug() {
     assert!(!store.path.exists());
 }
 
-// 23. A slug names one organization and a label may name several, so the slug
-//     is read first: an organization called "acme" does not shadow the one
-//     whose URL is /acme. A slug the cache does not hold is unknown, and
-//     costs no request.
+// 23. A rename moves a slug, and another organization may take it since. The
+//     cache's say-so on a name is held to the answer, like its say-so on
+//     membership: a name that has moved is refused, the fresh list is kept,
+//     and the next run reads the name as the console does.
 #[tokio::test]
-async fn test_org_switch_slug_before_label() {
+async fn test_slug_moved_since_cached() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
     let store = temp_store();
     let transport = MockTransport::new();
+    // As cached: org_1 at /org-1, org_2 at /org-2, org_3 at /org-3.
+    let stale = device_creds(&["org_1", "org_2", "org_3"], "org_3");
 
-    let mut creds = device_creds(&["org_a", "org_b"], "org_b");
-    creds.organizations[0].slug = "acme".to_string();
-    creds.organizations[0].label = "Acme Robotics".to_string();
-    creds.organizations[1].slug = "acme-2".to_string();
-    creds.organizations[1].label = "acme".to_string();
-    store.save(&creds).unwrap();
+    // Since then org_1 was renamed, and org_2 took the slug it left.
+    let me_acting_in = |active: &str| {
+        format!(
+            r#"{{
+                "person": {{ "userId": "usr_1", "email": "alice@example.com" }},
+                "organizations": [
+                    {{ "organizationId": "org_1", "slug": "one-labs", "name": "One Labs", "role": "owner" }},
+                    {{ "organizationId": "org_2", "slug": "org-1", "name": "Org 1", "role": "member" }},
+                    {{ "organizationId": "org_3", "slug": "org-3", "name": "Three", "role": "member" }}
+                ],
+                "activeOrganizationId": "{active}",
+                "sessionRowId": "0192a3b4-1111"
+            }}"#
+        )
+    };
+    let config = Config::default();
+    let status_under = |name: &'static str| {
+        status::execute(
+            status::StatusArgs { json: false },
+            &transport,
+            &store,
+            &config,
+            Some(name.to_string()),
+            None,
+        )
+    };
+    let switch_to = |name: &'static str| {
+        org::execute(
+            org::OrgCommand::Switch {
+                organization: name.to_string(),
+            },
+            &transport,
+            &store,
+        )
+    };
+    let cached = || store.load().unwrap().unwrap();
 
+    // 23a. status: the server acts in org_1, which the name no longer names
+    store.save(&stale).unwrap();
+    transport.push_answer(200, me_acting_in("org_1"));
+    let moved = status_under("org-1").await.unwrap_err();
+    assert_eq!(
+        moved.to_string(),
+        "org-1 no longer names the organization it did; run telmoni org list"
+    );
+    assert_eq!(cached().organizations[0].slug, "one-labs");
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_3"));
+
+    // 23b. the next run acts in the organization the console shows at /org-1
+    transport.push_answer(200, me_acting_in("org_2"));
+    status_under("org-1").await.unwrap();
+
+    // 23c. org switch: refused too, saying where the name went, and the
+    //      active organization stays
+    store.save(&stale).unwrap();
+    transport.push_answer(200, me_acting_in("org_1"));
+    let moved = switch_to("org-1").await.unwrap_err();
+    assert_eq!(
+        moved.to_string(),
+        "org-1 now names another organization; run telmoni org list"
+    );
+    assert_eq!(cached().organizations[1].slug, "org-1");
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_3"));
+
+    // 23d. and the next switch goes where the console's URL does
+    transport.push_answer(200, me_acting_in("org_2"));
+    switch_to("org-1").await.unwrap();
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_2"));
+
+    // 23e. an id never moves: under one, the renamed organization is still itself
+    transport.push_answer(200, me_acting_in("org_1"));
+    status_under("org_1").await.unwrap();
+
+    // 23f. a slug that moved and was taken by nobody is unknown once the
+    //      answer is in, as it would have been with a fresh cache
     transport.push_answer(
         200,
         r#"{
             "person": { "userId": "usr_1", "email": "alice@example.com" },
             "organizations": [
-                { "organizationId": "org_a", "slug": "acme", "name": "Acme Robotics", "role": "member" },
-                { "organizationId": "org_b", "slug": "acme-2", "name": "acme", "role": "member" }
+                { "organizationId": "org_1", "slug": "one-labs", "name": "One Labs", "role": "owner" },
+                { "organizationId": "org_2", "slug": "org-1", "name": "Org 1", "role": "member" },
+                { "organizationId": "org_3", "slug": "three-labs", "name": "Three Labs", "role": "member" }
             ],
-            "activeOrganizationId": "org_a",
+            "activeOrganizationId": "org_3",
             "sessionRowId": "0192a3b4-1111"
         }"#,
     );
-    org::execute(
-        org::OrgCommand::Switch {
-            organization: "acme".to_string(),
-        },
-        &transport,
-        &store,
-    )
-    .await
-    .unwrap();
+    let gone = switch_to("org-3").await.unwrap_err();
     assert_eq!(
-        transport.requests.lock().unwrap()[0]
-            .organization
-            .as_deref(),
-        Some("org_a")
+        gone.to_string(),
+        "unknown organization org-3; run telmoni org list"
     );
+    assert_eq!(cached().organizations[2].slug, "three-labs");
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_2"));
 
-    // Renamed in the console since the cache was written: its old slug.
-    let err = org::execute(
-        org::OrgCommand::Switch {
-            organization: "acme-labs".to_string(),
-        },
-        &transport,
-        &store,
-    )
-    .await
-    .unwrap_err();
-    assert!(err.to_string().contains("unknown organization acme-labs"));
-    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    let reqs = transport.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 6);
+    for (request, organization) in reqs
+        .iter()
+        .zip(["org_1", "org_2", "org_1", "org_2", "org_1", "org_3"])
+    {
+        assert_eq!(request.organization.as_deref(), Some(organization));
+    }
 }

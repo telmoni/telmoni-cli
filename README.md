@@ -84,14 +84,14 @@ List organizations your account belongs to:
 telmoni org list
 ```
 
-Switch your active organization context, by its ID, its slug (the first segment of its console URL) or its name:
+Switch your active organization context, by its ID or its slug (the first segment of its console URL):
 
 ```console
 telmoni org switch org_xxxxxxxxxxxx
 telmoni org switch acme-robotics
 ```
 
-You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug.
+You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug. A script should carry the ID: a rename moves the slug, and the CLI resolves a slug against the organizations it cached at its last `status` or `org switch`, without asking the server.
 
 ### 4. Log Out
 

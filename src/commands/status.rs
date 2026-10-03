@@ -96,6 +96,17 @@ async fn execute_device(
         bail!("you are no longer in {env_org}");
     }
 
+    // ⚠ Nor is its say-so on a slug. A rename moves one and another
+    // organization may take it since, so the list just answered has to
+    // give the organization the same name; else this would report on one
+    // the console no longer shows at that URL.
+    if let Some(env_org) = telmoni_org_env.as_deref() {
+        let named_now = creds.organization_named(env_org);
+        if named_now.map(|o| &o.organization_id) != active_org_id.as_ref() {
+            bail!("{env_org} no longer names the organization it did; run telmoni org list");
+        }
+    }
+
     let effective_active_id = if telmoni_org_env.is_some() {
         active_org_id.as_deref()
     } else {

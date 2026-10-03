@@ -71,15 +71,15 @@ Blank values are skipped and a trailing `/` is trimmed. A value with no scheme g
 | `login --key <key>` | Nothing: the key is checked for shape only | "Signed in with API key", and the endpoint | — |
 | `logout` | Refresh if needed, then the session revoke (see [auth](auth.md#signing-out)) | "Signed out", or "Not signed in" | A note when the server did not confirm |
 | `status` / `whoami [--json]` | With an API key: `GET /v1/organization`. Signed in: refresh if needed, then `/cli/me` with the active organization, rewriting the cached person and organizations. | Who and which organization, the endpoint, the token's remaining lifetime; or JSON | — |
-| `organization list` (alias `org list`) | Nothing: reads the cache | One organization per line (id, slug, label, role), `*` marking the active one | — |
-| `organization switch <organization>` (alias `org switch`) | Refresh if needed, then `/cli/me` with that organization's id. It must come back as the active one. | The new active organization | — |
+| `org list` | Nothing: reads the cache | One organization per line (id, slug, label, role), `*` marking the active one | — |
+| `org switch <organization>` | Refresh if needed, then `/cli/me` with that organization's id. It must come back as the active one. | The new active organization | — |
 | `config get` / `set` / `list` | Nothing | The value, or the listing | — |
 
 A few details the table leaves out:
 - **Signed-out `status`** prints the endpoint to stdout, then fails with a message saying how to sign in.
-- **`status` checks the answer.** With `TELMONI_ORGANIZATION` (or `TELMONI_ORG`) set, it checks the organization against the cache before calling, and against the server's answer after. `/me` falls back to another organization when the one asked for is no longer the person's.
+- **`status` checks the answer.** With `TELMONI_ORG` set, it checks the organization against the cache before calling, and against the server's answer after: that the server acted in it, and that the answer's list still gives it that name. `/me` falls back to another organization when the one asked for is no longer the person's.
 - **`org list` and `org switch` refuse an API key.** A key belongs to one organization.
-- **`org switch` takes an id, a slug or a label**, and refuses one the cache does not hold before making any request. A label two organizations share is refused too, naming each by slug and id.
+- **`org switch` takes an id or a slug**, never a label, and refuses one the cache does not hold before making any request. It checks the answer as `status` does.
 
 ## Organizations
 
@@ -88,19 +88,23 @@ A few details the table leaves out:
 - keeps one as active in the credentials file, by id;
 - sends its id on the requests that act inside an organization.
 
-`TELMONI_ORGANIZATION` (or `TELMONI_ORG`) overrides it for one command.
+`TELMONI_ORG` overrides it for one command.
 
-**Three ways to name one** (`Credentials::organization_named`, `resolve_target_org`):
+**Two ways to name one** (`Credentials::organization_named`), in `org switch` and in the variable alike:
 
-| Name | Where it is taken | Matched |
-|---|---|---|
-| Id (`org_…`) | `org switch`, the variable | Exactly |
-| Slug | `org switch`, the variable | Exactly. It is what the console's URL shows: `/{slug}`. |
-| Label | `org switch` only | Ignoring ASCII case. Refused when several organizations share it. |
+| Name | Matched |
+|---|---|
+| Id (`org_…`) | Exactly |
+| Slug | Exactly. It is what the console's URL shows: `/{slug}`. |
 
-- **An id or a slug is read before a label.** Each names one organization. A slug has no underscore and an id always has one, so the two never collide.
-- ⚠ **The slug is a name for people, never what goes on the wire.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header.
-- ⚠ **A slug follows the organization's name, so a rename in the console moves it.** The cache holds the slug `/cli/me` last answered. An older one is unknown here until `status`, or a successful `org switch`, rewrites the cache. The id never moves.
+- **Each names one organization**, and the two never look alike: a slug has no underscore and an id always has one. So a name never names two, and nothing is picked silently.
+- ⚠ **A label is not a name.** Labels are neither unique nor stable, so taking one means rules for the collisions that follow, and a wrong guess acts in another organization. `org list` shows the slug beside each; that is the human handle.
+- ⚠ **The slug is a name for people, never what goes on the wire, and never what a script carries.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header. A script that pins an organization pins its id: a rename moves the slug, and the next run fails.
+- ⚠ **A slug follows the organization's name, so a rename in the console moves it**, and another organization may then take the one it left. The cache holds the slug `/cli/me` last answered, and nothing is fetched to resolve a name. So:
+  - **The new slug is unknown here**, and refused before any request, until `status`, or an `org switch` by a name the cache does hold, rewrites the cache.
+  - **The old slug still resolves, to the organization that held it.** `status` and `org switch` hold it to the answer: `/cli/me`'s list must give that organization the same name. If it does not, the command fails (`status`: "no longer names the organization it did"; `org switch` says whether the name is now unknown or now another organization's), keeps the fresh list, and leaves the active organization where it was. The next run reads the name as the console does. Without the check, the CLI reported on, or switched to, an organization the console no longer shows at that URL.
+  - `logout` makes no such call. A moved slug there puts the revoke's audit record on the organization the cache names.
+  - The id never moves.
 
 **An organization's label** is its trimmed `name`, else its owner's address, else "Organization". The platform leaves a new organization unnamed, and labels it by its owner.
 
