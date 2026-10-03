@@ -24,7 +24,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Host-safe gate: fmt · clippy `-D warnings` · build · test · docs · cargo-deny.
+    /// Host-safe gate: fmt · toolchain = `rust-version` · clippy `-D warnings` ·
+    /// build · test · docs · cargo-deny.
     Ci,
     /// Package this host's release under `dist/`.
     Dist,
@@ -37,7 +38,8 @@ fn main() -> Result<()> {
     }
 }
 
-/// The host-safe gate. `--locked` everywhere.
+/// The host-safe gate. `--locked` on every step that resolves dependencies;
+/// fmt alone takes no such flag.
 fn ci() -> Result<()> {
     cargo(&["fmt", "--all", "--check"])?;
     toolchain_msrv_agree(&workspace_root())?;
@@ -62,7 +64,7 @@ fn ci() -> Result<()> {
         &["doc", "--no-deps", "--workspace", "--locked"],
         &[("RUSTDOCFLAGS", "-D warnings")],
     )?;
-    cargo(&["deny", "check"])?;
+    cargo(&["deny", "--locked", "check"])?;
     println!("✓ ci: gate passed");
     Ok(())
 }

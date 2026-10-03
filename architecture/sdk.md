@@ -22,7 +22,7 @@ That is deliberate. The platform's code is the contract, and an SDK grows a clie
 | Rust | `telmoni-sdk` (`publish = false`) | `Config { endpoint, organization_id, auth_token }` | `Config::new`, `Client::new`, `from_env`, `with_config`, `config()`; `Telmoni` is an alias of `Client` |
 | TypeScript | `telmoni` | `Config { endpoint?, apiKey?, organizationId? }` | `new Telmoni(config)`, `Telmoni.fromEnv()`, the read-only `config` |
 | Go | `github.com/telmoni/telmoni-cli/sdk/go` | `Config{Endpoint, OrganizationID, AuthToken}` | `DefaultConfig`, `ConfigFromEnv`, `New`, `NewFromEnv`, `Config()`; `Telmoni` is an alias |
-| Python | `telmoni` | `@dataclass Config(endpoint, api key, organization)` | `Telmoni(config=None)`, `Telmoni.from_env()` |
+| Python | `telmoni` | `@dataclass Config(endpoint, organization_id, auth_token)` | `Telmoni(config=None)`, `Telmoni.from_env()` |
 
 Their dependencies are minimal:
 - **Rust:** serde only.
@@ -63,10 +63,10 @@ Each SDK has one contract test file:
 |---|---|---|---|---|
 | The default endpoint, as the constant and as the literal URL | yes | yes | the constant only | yes |
 | A trailing `/` is stripped | yes | yes | — | yes |
-| Building from the environment gives the default | yes | yes | yes (non-nil) | yes |
+| Building from the environment gives the default | non-empty only | yes, with `TELMONI_ENDPOINT` and `TELMONI_API_URL` cleared first | non-nil only | yes, with the two cleared first |
 
 Not pinned anywhere:
-- the environment variable names and their precedence (no test sets one);
+- the environment variable names and their precedence (no test sets one; the TypeScript and Python tests only clear the endpoint's, so a shell pointed at a local stack does not fail them);
 - the organization field;
 - the credential.
 

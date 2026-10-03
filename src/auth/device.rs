@@ -15,7 +15,7 @@ use crate::transport::{LaneAnswer, LaneError, LaneRequest, Transport, parse_lane
 pub struct DeviceStart {
     /// Secret device code to poll with.
     pub device_code: String,
-    /// User-facing short code (e.g. "ABCD-EFGH").
+    /// User-facing short code, consonants only (e.g. "BCDF-GHJK").
     pub user_code: String,
     /// Verification URL where user enters the code.
     pub verification_uri: String,
@@ -42,9 +42,9 @@ pub struct AuthnResult {
     pub first_name: Option<String>,
     /// Last name.
     pub last_name: Option<String>,
-    /// Access token (JWT).
+    /// Access token: an opaque secret the platform minted, not a JWT.
     pub access_token: String,
-    /// Refresh token (null if unchanged).
+    /// Refresh token, rotated on every grant.
     pub refresh_token: Option<String>,
     /// Access token validity in seconds.
     pub expires_in: i64,
@@ -73,8 +73,10 @@ pub struct Person {
 pub struct Organization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by (`/{slug}`). It follows the
-    /// name, so a rename moves it; only the id names the organization.
+    /// The slug the console's paths name it by (`/{slug}`): a placeholder
+    /// (`org-` and ten random characters) until the first name its owner
+    /// gives it reads as a slug and replaces it, then moved only by a change
+    /// to the URL setting. Only the id names the organization.
     pub slug: String,
     /// Organization name.
     pub name: Option<String>,
@@ -87,19 +89,14 @@ pub struct Organization {
 }
 
 impl Organization {
-    /// Computes the organization label:
-    /// `name` when non-empty after trimming, else `owner_email` when non-null, else "Organization".
+    /// The organization's label: its trimmed `name`, else "Organization".
+    /// Never the owner's address: the owner names an organization before
+    /// anyone else sees it, and an address is a person's.
     pub fn label(&self) -> &str {
-        if let Some(ref n) = self.name {
-            let trimmed = n.trim();
-            if !trimmed.is_empty() {
-                return trimmed;
-            }
+        match self.name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name,
+            _ => "Organization",
         }
-        if let Some(ref email) = self.owner_email {
-            return email.as_str();
-        }
-        "Organization"
     }
 }
 
@@ -117,7 +114,9 @@ pub struct Me {
     pub active_organization_id: Option<String>,
     /// Session row ID for Active Sessions tracking.
     pub session_row_id: Option<String>,
-    /// Whether this is the person's first login.
+    /// True only on the answer that provisioned an organization for them: not
+    /// on a first sign-in while sign-ups are closed, and true again once their
+    /// last organization is gone and a fresh one is made.
     #[serde(default)]
     pub first_login: bool,
 }

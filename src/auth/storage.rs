@@ -156,12 +156,13 @@ impl Credentials {
         self.updated_at = chrono::Utc::now().timestamp();
     }
 
-    /// Applies refreshed authentication tokens.
+    /// Applies refreshed authentication tokens. The grant spent the refresh
+    /// token it was handed whatever it answers, and a spent one presented
+    /// again after a short grace ends the whole session, so an answer without
+    /// one leaves none to keep.
     pub fn apply_refresh(&mut self, authn: &crate::auth::device::AuthnResult) {
         self.access_token = Some(authn.access_token.clone());
-        if let Some(ref new_rt) = authn.refresh_token {
-            self.refresh_token = Some(new_rt.clone());
-        }
+        self.refresh_token = authn.refresh_token.clone();
         self.expires_at = Some(chrono::Utc::now().timestamp() + authn.expires_in);
         self.updated_at = chrono::Utc::now().timestamp();
     }
@@ -175,7 +176,8 @@ impl Credentials {
 
     /// The cached organization an id or a slug names. The two never look
     /// alike: a slug has no underscore, and an id always has one. A slug is
-    /// the one `/cli/me` last answered, so a rename since is not known here.
+    /// the one `/cli/me` last answered, so a first name or a URL change since
+    /// is not known here.
     ///
     /// ⚠ Exactly, like an id. A slug is lowercase, and read loosely `Acme`
     /// would pick the organization at `/acme` out of two that are both

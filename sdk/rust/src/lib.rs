@@ -14,7 +14,7 @@ pub struct Config {
     pub endpoint: String,
     /// Organization ID (`org_…`).
     pub organization_id: Option<String>,
-    /// Authentication token or API key (`TELMONI_API_KEY`).
+    /// The API key (`telmoni_…`, `TELMONI_API_KEY`); `/v1` takes no other bearer.
     pub auth_token: Option<String>,
 }
 

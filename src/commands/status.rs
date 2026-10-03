@@ -92,15 +92,16 @@ async fn execute_device(
     creds.update_from_me(&me, telmoni_org_env.is_some());
     let _ = store.save(creds);
 
-    // `/me` acts in the oldest organization when the one asked for is
-    // no longer the person's, so the cached list's say-so is not enough.
+    // `/me` falls back — to the oldest organization they own, else the oldest
+    // they belong to — when the one asked for is no longer theirs, so the
+    // cached list's say-so is not enough.
     if let Some(env_org) = telmoni_org_env.as_deref()
         && me.active_organization_id != active_org_id
     {
         bail!("you are no longer in {env_org}");
     }
 
-    // ⚠ Nor is its say-so on a slug. A rename moves one and another
+    // ⚠ Nor is its say-so on a slug. A URL change moves one and another
     // organization may take it since, so the list just answered has to
     // give the organization the same name; else this would report on one
     // the console no longer shows at that URL.
@@ -135,8 +136,14 @@ fn resolve_device_active_org(
     telmoni_org_env: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(env_org) = telmoni_org_env {
+        // The cache, not the truth: a slug the organization took since —
+        // its first name, a URL change — is unknown here until `/cli/me` is
+        // read again.
         let Some(named) = creds.organization_named(env_org) else {
-            bail!("TELMONI_ORG names an organization you are not in");
+            bail!(
+                "TELMONI_ORG names no organization in the cached list; run telmoni status \
+                 without it to refresh the list"
+            );
         };
         Ok(Some(named.organization_id.clone()))
     } else {

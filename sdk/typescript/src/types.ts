@@ -8,7 +8,7 @@ export interface Config {
   endpoint?: string | undefined;
 
   /**
-   * API Key or bearer token used for authenticating requests.
+   * The API key (`telmoni_…`); `/v1` takes no other bearer.
    */
   apiKey?: string | undefined;
 

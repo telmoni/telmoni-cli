@@ -1,5 +1,7 @@
 # Release: a human pushes a `v*` tag, this builds `cargo xtask dist` on the two hosts the project
-# targets, and publishes the assets `install.sh` fetches from `releases/latest/download/`.
+# targets, and publishes the assets `install.sh` downloads from `releases/download/<tag>/` (the
+# latest tag unless `TELMONI_VERSION` picks one); the platform's `/install.sh` redirect serves the
+# script itself from `releases/latest/download/`.
 name: Release
 
 on:

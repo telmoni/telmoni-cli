@@ -210,12 +210,12 @@ fn test_lane_error_parser() {
     let answer3 = LaneAnswer {
         status: 429,
         content_type: Some("application/problem+json".to_string()),
-        body: r#"{"type":"/errors/rate-limit","title":"Too Many Requests","status":429,"detail":"slow down","retry_after_secs":45}"#.to_string(),
+        body: r#"{"type":"/errors/tenant/rate-limited","title":"rate limited","status":429,"detail":"retry after 45s","retry_after_secs":45}"#.to_string(),
     };
     let err3 = parse_lane_error(&answer3);
     assert_eq!(err3.status, 429);
     assert_eq!(err3.retry_after_secs, Some(45));
-    assert_eq!(err3.message, "Too Many Requests: slow down");
+    assert_eq!(err3.message, "rate limited: retry after 45s");
 
     // { "error": ... }
     let answer4 = LaneAnswer {
@@ -291,7 +291,7 @@ async fn test_poll_once_outcomes() {
     // 429 RateLimited
     transport.push_answer(
         429,
-        r#"{"type":"/errors/rate-limit","title":"rate limited","status":429,"retry_after_secs":12}"#,
+        r#"{"type":"/errors/tenant/rate-limited","title":"rate limited","status":429,"retry_after_secs":12}"#,
     );
     let outcome = poll_once(&transport, "https://telmoni.com", "code123")
         .await
@@ -303,8 +303,11 @@ async fn test_poll_once_outcomes() {
         }
     );
 
-    // 401 Dead device code
-    transport.push_answer(401, r#"{"error":"invalid code"}"#);
+    // 401 Dead device code, as auth answers one it does not know
+    transport.push_answer(
+        401,
+        r#"{"type":"/errors/auth/invalid-token","title":"invalid token","status":401}"#,
+    );
     let outcome = poll_once(&transport, "https://telmoni.com", "code123")
         .await
         .unwrap();
@@ -315,14 +318,33 @@ async fn test_poll_once_outcomes() {
         )
     );
 
-    // 403 Authorization denied
-    transport.push_answer(403, r#"{"error":"access denied by user"}"#);
+    // 403 Authorization denied, as auth answers it: a problem document, read
+    // as `title: detail`
+    transport.push_answer(
+        403,
+        r#"{"type":"/errors/authz/forbidden","title":"forbidden","status":403,"detail":"the sign-in was denied from the console"}"#,
+    );
     let outcome = poll_once(&transport, "https://telmoni.com", "code123")
         .await
         .unwrap();
     assert_eq!(
         outcome,
-        PollOutcome::Failed("access denied by user".to_string())
+        PollOutcome::Failed("forbidden: the sign-in was denied from the console".to_string())
+    );
+
+    // 400 Expired, as auth answers a code approved too late
+    transport.push_answer(
+        400,
+        r#"{"type":"/errors/auth/bad-request","title":"bad request","status":400,"detail":"the device code expired before it was approved; start again"}"#,
+    );
+    let outcome = poll_once(&transport, "https://telmoni.com", "code123")
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        PollOutcome::Failed(
+            "bad request: the device code expired before it was approved; start again".to_string()
+        )
     );
 }
 
@@ -338,7 +360,7 @@ async fn test_poll_until_granted_scenarios() {
         email_verified: true,
         first_name: None,
         last_name: None,
-        access_token: "jwt_token".to_string(),
+        access_token: "at_1".to_string(),
         refresh_token: None,
         expires_in: 3600,
         auth_method: None,
@@ -372,7 +394,7 @@ async fn test_poll_until_granted_scenarios() {
         .await
         .unwrap();
 
-        assert_eq!(authn.access_token, "jwt_token");
+        assert_eq!(authn.access_token, "at_1");
         assert_eq!(
             *sleeps.lock().unwrap(),
             vec![Duration::from_secs(5), Duration::from_secs(5)]
@@ -566,7 +588,7 @@ async fn test_poll_until_granted_scenarios() {
 }
 
 // 6. refresh_if_needed: 401 clearing the file; 200 saving the new tokens;
-//    a null refreshToken in the 200 leaving the old refresh token in place
+//    a null refreshToken in the 200 leaving none: the one presented is spent
 #[tokio::test]
 async fn test_refresh_if_needed() {
     let store = temp_store();
@@ -612,7 +634,9 @@ async fn test_refresh_if_needed() {
     assert_eq!(loaded.access_token.as_deref(), Some("new_at"));
     assert_eq!(loaded.refresh_token.as_deref(), Some("new_rt"));
 
-    // null refreshToken leaving old refresh token in place
+    // null refreshToken: the grant spent the one presented, and keeping it
+    // would present a spent token next time, which after a short grace ends
+    // the whole session
     creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
     store.save(&creds).unwrap();
 
@@ -630,15 +654,17 @@ async fn test_refresh_if_needed() {
         .await
         .unwrap();
     assert_eq!(creds.access_token.as_deref(), Some("new_at_2"));
-    assert_eq!(creds.refresh_token.as_deref(), Some("new_rt")); // preserved
+    assert_eq!(creds.refresh_token, None);
+    assert_eq!(store.load().unwrap().unwrap().refresh_token, None);
 
     // 401 clearing the file
+    creds.refresh_token = Some("rt_again".to_string());
     creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
     store.save(&creds).unwrap();
 
     transport.push_answer(
         401,
-        r#"{"type":"/errors/auth/session-ended","title":"session ended","status":401}"#,
+        r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#,
     );
 
     let err = refresh_if_needed(&transport, &store, &mut creds)
@@ -649,9 +675,24 @@ async fn test_refresh_if_needed() {
         store.load().unwrap().is_none(),
         "store should be cleared after 401"
     );
+    // One refresh request per case so far: the 401 was answered, not skipped.
+    assert_eq!(transport.requests.lock().unwrap().len(), 3);
+
+    // no refresh token held — what a null-token grant leaves behind: nothing
+    // to present, so no request, and the file goes as it does on a 401
+    creds.refresh_token = None;
+    creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    store.save(&creds).unwrap();
+
+    let err = refresh_if_needed(&transport, &store, &mut creds)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("session ended"));
+    assert!(store.load().unwrap().is_none());
+    assert_eq!(transport.requests.lock().unwrap().len(), 3);
 }
 
-// 7. organization label: name when present, else owner email, else Organization
+// 7. organization label: name when present, else Organization — never the owner's address
 #[test]
 fn test_organization_label_fallback() {
     let org_with_name = Organization {
@@ -672,7 +713,7 @@ fn test_organization_label_fallback() {
         owner_display_name: None,
         role: "admin".to_string(),
     };
-    assert_eq!(org_with_empty_name.label(), "owner@example.com");
+    assert_eq!(org_with_empty_name.label(), "Organization");
 
     let org_without_name = Organization {
         organization_id: "org_3".to_string(),
@@ -682,7 +723,7 @@ fn test_organization_label_fallback() {
         owner_display_name: None,
         role: "member".to_string(),
     };
-    assert_eq!(org_without_name.label(), "owner@example.com");
+    assert_eq!(org_without_name.label(), "Organization");
 
     let org_without_owner = Organization {
         organization_id: "org_4".to_string(),
@@ -693,6 +734,34 @@ fn test_organization_label_fallback() {
         role: "member".to_string(),
     };
     assert_eq!(org_without_owner.label(), "Organization");
+}
+
+// 7b. the same label under an API key: `/v1/organization` carries the owner's
+//     address beside the name, and it labels nothing
+#[test]
+fn test_v1_organization_label_never_uses_the_owners_address() {
+    use telmoni_cli::client::{V1Organization, V1Owner};
+    let owner = || {
+        Some(V1Owner {
+            email: "owner@example.com".to_string(),
+            display_name: None,
+        })
+    };
+    let named = V1Organization {
+        organization_id: "org_1".to_string(),
+        slug: "acme".to_string(),
+        name: Some("  Acme Corp ".to_string()),
+        owner: owner(),
+    };
+    assert_eq!(named.label(), "Acme Corp");
+
+    let unnamed = V1Organization {
+        organization_id: "org_2".to_string(),
+        slug: "org-2".to_string(),
+        name: None,
+        owner: owner(),
+    };
+    assert_eq!(unnamed.label(), "Organization");
 }
 
 // 8. org switch: unknown organization rejected without network; active switch verified
@@ -866,7 +935,7 @@ async fn test_logout_outcomes() {
     // Refresh answers 401
     transport.push_answer(
         401,
-        r#"{"type":"/errors/auth/session-ended","title":"session ended","status":401}"#,
+        r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#,
     );
 
     logout::execute(logout::LogoutArgs {}, &transport, &store, None)
@@ -904,8 +973,11 @@ async fn test_logout_outcomes() {
     store.save(&creds_revoke_404).unwrap();
     assert!(store.path.exists());
 
-    // Revoke answers 404
-    transport.push_answer(404, r#"{"error":"session not found"}"#);
+    // Revoke answers 404, as auth does for a session already gone
+    transport.push_answer(
+        404,
+        r#"{"type":"/errors/auth/not-found","title":"not found","status":404,"detail":"session not found"}"#,
+    );
 
     logout::execute(logout::LogoutArgs {}, &transport, &store, None)
         .await
@@ -1097,9 +1169,12 @@ async fn test_telmoni_org_env_validation() {
     )
     .await
     .unwrap_err();
+    // The cache may simply be stale — a first name or a URL change moved the
+    // slug — so the message blames the cache, not the person's membership.
     assert_eq!(
         status_err.to_string(),
-        "TELMONI_ORG names an organization you are not in"
+        "TELMONI_ORG names no organization in the cached list; run telmoni status without it \
+         to refresh the list"
     );
 
     // Invalid TELMONI_ORG on logout fails before network and preserves file
@@ -1113,7 +1188,8 @@ async fn test_telmoni_org_env_validation() {
     .unwrap_err();
     assert_eq!(
         logout_err.to_string(),
-        "TELMONI_ORG names an organization you are not in"
+        "TELMONI_ORG names no organization in the cached list; run telmoni status without it \
+         to refresh the list"
     );
     assert!(store.path.exists());
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
@@ -1199,12 +1275,136 @@ async fn test_status_updates_cached_credentials() {
     );
     assert_eq!(updated.organizations.len(), 2);
     assert_eq!(updated.organizations[0].label, "Acme Corp");
-    // A rename moves the slug with the name; the id stays.
+    // A URL change moves the slug; the id stays.
     assert_eq!(updated.organizations[0].organization_id, "org_1");
     assert_eq!(updated.organizations[0].slug, "acme-corp");
     assert_eq!(updated.organizations[0].role, "admin");
     assert_eq!(updated.organizations[1].label, "Beta Labs");
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
+}
+
+// 13b. Status on an organization its owner has not named yet: signed in before
+//      the console's naming step, `/cli/me` answers the placeholder slug and no
+//      name. The label is "Organization", never the owner's address, and the
+//      slug is kept as answered.
+#[tokio::test]
+async fn test_status_labels_an_unnamed_organization() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let config = Config::default();
+
+    let creds = Credentials {
+        auth_type: AuthType::Device,
+        endpoint: "https://telmoni.com".to_string(),
+        access_token: Some("token_original".to_string()),
+        refresh_token: Some("rt_original".to_string()),
+        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+        session_row_id: Some("0192a3b4-1111".to_string()),
+        person: Some(StoredPerson {
+            user_id: "usr_1".to_string(),
+            email: "alice@example.com".to_string(),
+            display_name: None,
+        }),
+        organizations: Vec::new(),
+        active_organization_id: None,
+        api_key: None,
+        updated_at: 100,
+    };
+    store.save(&creds).unwrap();
+
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [
+                {
+                    "organizationId": "org_1",
+                    "slug": "org-k3x9qz1a2b",
+                    "name": null,
+                    "ownerEmail": "alice@example.com",
+                    "role": "owner"
+                }
+            ],
+            "activeOrganizationId": "org_1",
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+
+    status::execute(
+        status::StatusArgs { json: false },
+        &transport,
+        &store,
+        &config,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let updated = store.load().unwrap().unwrap();
+    assert_eq!(updated.organizations.len(), 1);
+    assert_eq!(updated.organizations[0].label, "Organization");
+    assert_eq!(updated.organizations[0].slug, "org-k3x9qz1a2b");
+    assert_eq!(updated.active_organization_id.as_deref(), Some("org_1"));
+}
+
+// 13c. Status for somebody in no organization — sign-ups closed, or their last
+//      one gone: nothing to label and nothing active, and the command succeeds
+#[tokio::test]
+async fn test_status_in_no_organization() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let config = Config::default();
+
+    let creds = Credentials {
+        auth_type: AuthType::Device,
+        endpoint: "https://telmoni.com".to_string(),
+        access_token: Some("token_original".to_string()),
+        refresh_token: Some("rt_original".to_string()),
+        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
+        session_row_id: Some("0192a3b4-1111".to_string()),
+        person: Some(StoredPerson {
+            user_id: "usr_1".to_string(),
+            email: "alice@example.com".to_string(),
+            display_name: None,
+        }),
+        organizations: Vec::new(),
+        active_organization_id: None,
+        api_key: None,
+        updated_at: 100,
+    };
+    store.save(&creds).unwrap();
+
+    transport.push_answer(
+        200,
+        r#"{
+            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "organizations": [],
+            "activeOrganizationId": null,
+            "sessionRowId": "0192a3b4-1111"
+        }"#,
+    );
+
+    status::execute(
+        status::StatusArgs { json: true },
+        &transport,
+        &store,
+        &config,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let updated = store.load().unwrap().unwrap();
+    assert!(updated.organizations.is_empty());
+    assert_eq!(updated.active_organization_id, None);
 }
 
 // 14. Status retries on token expired
@@ -1414,7 +1614,11 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
 
     transport.push_answer(401, TOKEN_EXPIRED);
-    transport.push_answer(503, r#"{"error":"upstream unavailable"}"#);
+    // The door's own answer when the server does not: a problem document.
+    transport.push_answer(
+        503,
+        r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the server did not answer; try again shortly"}"#,
+    );
 
     let err = status::execute(
         status::StatusArgs { json: false },
@@ -1427,7 +1631,10 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
     .await
     .unwrap_err();
 
-    assert_eq!(err.to_string(), "upstream unavailable");
+    assert_eq!(
+        err.to_string(),
+        "upstream unavailable: the server did not answer; try again shortly"
+    );
     assert!(store.path.exists(), "a 503 must never delete credentials");
 }
 
@@ -1752,7 +1959,8 @@ async fn test_org_switch_takes_no_label() {
     .unwrap_err();
     assert_eq!(
         err.to_string(),
-        "unknown organization Acme; run telmoni org list"
+        "unknown organization Acme: not in the cached list; run telmoni status to refresh it, \
+         then telmoni org list"
     );
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
 
@@ -1912,7 +2120,7 @@ async fn test_organization_named_by_slug() {
     assert!(!store.path.exists());
 }
 
-// 23. A rename moves a slug, and another organization may take it since. The
+// 23. A URL change moves a slug, and another organization may take it since. The
 //     cache's say-so on a name is held to the answer, like its say-so on
 //     membership: a name that has moved is refused, the fresh list is kept,
 //     and the next run reads the name as the console does.
@@ -1926,7 +2134,7 @@ async fn test_slug_moved_since_cached() {
     // As cached: org_1 at /org-1, org_2 at /org-2, org_3 at /org-3.
     let stale = device_creds(&["org_1", "org_2", "org_3"], "org_3");
 
-    // Since then org_1 was renamed, and org_2 took the slug it left.
+    // Since then org_1's URL was changed, and org_2 took the slug it left.
     let me_acting_in = |active: &str| {
         format!(
             r#"{{
@@ -1995,7 +2203,7 @@ async fn test_slug_moved_since_cached() {
     switch_to("org-1").await.unwrap();
     assert_eq!(cached().active_organization_id.as_deref(), Some("org_2"));
 
-    // 23e. an id never moves: under one, the renamed organization is still itself
+    // 23e. an id never moves: under one, the organization whose URL changed is still itself
     transport.push_answer(200, me_acting_in("org_1"));
     status_under("org_1").await.unwrap();
 

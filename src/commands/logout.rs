@@ -69,7 +69,10 @@ fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
     if let Some(target) = env_org
         && creds.organization_named(target).is_none()
     {
-        bail!("TELMONI_ORG names an organization you are not in");
+        bail!(
+            "TELMONI_ORG names no organization in the cached list; run telmoni status \
+             without it to refresh the list"
+        );
     }
     Ok(())
 }

@@ -72,9 +72,9 @@ install.sh          the installer, checksum-verified
 | **Lane** | One of the platform's endpoints, such as `/cli/me` or `/cli/auth/refresh` |
 | **Device code** | The secret the CLI polls with. Never printed. |
 | **User code** | The short code the person types into the console to approve a sign-in. The only code shown. |
-| **Session row** | The platform's record of a sign-in, listed on the person's Sessions page. `sessionRowId` is how the CLI refreshes and revokes it. |
+| **Session row** | The platform's record of a sign-in, listed under Active sessions on the person's Privacy page. `sessionRowId` is how the CLI refreshes and revokes it. |
 | **Active organization** | The CLI's chosen organization, sent as `x-organization-id`. The platform itself picks one per request. |
-| **Slug** | The name an organization goes by in the console's URL. The platform derives it from the organization's name, so a rename moves it. The CLI takes one wherever it takes an id, and sends the id. |
+| **Slug** | The name an organization goes by in the console's URL. A placeholder (`org-` and ten random characters) until the first name its owner gives it reads as a slug and replaces it; after that only a change to its URL setting moves it, never a rename. The CLI takes one wherever it takes an id, and sends the id. |
 | **Credentials file** | `credentials.json` in the configuration directory, mode `0600`, unencrypted: the CLI's only state |
 
 ## Keeping these pages true

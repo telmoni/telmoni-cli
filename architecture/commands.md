@@ -28,7 +28,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 | Variable | Read by | Used for |
 |---|---|---|
 | `TELMONI_ENDPOINT` | `main`, and clap for `login --endpoint` | The base URL at sign-in, and for a signed-out `status` |
-| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a rename moves the slug, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
+| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a first name that reads as a slug replaces the placeholder and any URL change moves it, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
 | `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. |
 
 **Debug builds also read a `.env`** from the working directory, after the real environment. Release builds compile that out.
@@ -99,14 +99,14 @@ A few details the table leaves out:
 
 - **Each names one organization**, and the two never look alike: a slug has no underscore and an id always has one. So a name never names two, and nothing is picked silently.
 - ⚠ **A label is not a name.** Labels are neither unique nor stable, so taking one means rules for the collisions that follow, and a wrong guess acts in another organization. `org list` shows the slug beside each; that is the human handle.
-- ⚠ **The slug is a name for people, never what goes on the wire, and never what a script carries.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header. A script that pins an organization pins its id: a rename moves the slug, and the next run fails.
-- ⚠ **A slug follows the organization's name, so a rename in the console moves it**, and another organization may then take the one it left. The cache holds the slug `/cli/me` last answered, and nothing is fetched to resolve a name. So:
-  - **The new slug is unknown here**, and refused before any request, until `status`, or an `org switch` by a name the cache does hold, rewrites the cache.
+- ⚠ **The slug is a name for people, never what goes on the wire, and never what a script carries.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header. A script that pins an organization pins its id: a first name that reads as a slug replaces the placeholder and any URL change moves it, and the next run fails.
+- ⚠ **A slug is a placeholder (`org-` and ten random characters) until the first name its owner gives it reads as a slug and replaces it (a name with no Latin letter or digit leaves the placeholder), and after that moves only when its URL is changed on the console's Settings page** (a rename moves nothing); another organization may then take the one it left. A `login` before the owner has named the organization caches the placeholder. The cache holds the slug `/cli/me` last answered, and nothing is fetched to resolve a name. So:
+  - **The new slug is unknown here**, and refused before any request, until `login`, `status`, or an `org switch` by a name the cache does hold, rewrites the cache.
   - **The old slug still resolves, to the organization that held it.** `status` and `org switch` hold it to the answer: `/cli/me`'s list must give that organization the same name. If it does not, the command fails (`status`: "no longer names the organization it did"; `org switch` says whether the name is now unknown or now another organization's), keeps the fresh list, and leaves the active organization where it was. The next run reads the name as the console does. Without the check, the CLI reported on, or switched to, an organization the console no longer shows at that URL.
   - `logout` makes no such call. A moved slug there puts the revoke's audit record on the organization the cache names.
   - The id never moves.
 
-**An organization's label** is its trimmed `name`, else its owner's address, else "Organization". The platform leaves a new organization unnamed, and labels it by its owner.
+**An organization's label** is its trimmed `name`, else "Organization", and never its owner's address: the platform asks the owner to name a new organization before the console opens to them, so one with no name is seen by nobody else.
 
 ## Output
 

@@ -40,7 +40,7 @@ sequenceDiagram
   B->>Auth: the person signs in and approves the code
   loop every interval, until expiry
     CLI->>Door: POST /cli/auth/device/poll {deviceCode}
-    Door-->>CLI: 202 pending or slow_down / 200 tokens / 403 denied / 400 expired
+    Door-->>CLI: 202 pending or slow_down / 200 tokens / 403 denied / 400 expired / 401 unknown code
   end
   CLI->>Door: POST /cli/me (bearer)
   Door-->>CLI: person, organizations, active organization, sessionRowId
@@ -68,10 +68,10 @@ sequenceDiagram
    | 5xx, or a network failure | Stops. The person runs `telmoni login` again. |
 
    The interval never drops below one second.
-4. **Who am I.** `POST /cli/me` with the new bearer. The door sends `/me` the CLI's `User-Agent`, so the session appears on the person's Sessions page as "Telmoni CLI (macOS)" or similar. `/me` writes the session row, and answers its id (`sessionRowId`), which later sign-outs need.
+4. **Who am I.** `POST /cli/me` with the new bearer. The door sends `/me` the CLI's `User-Agent`, so the session appears under Active sessions on the person's Privacy page as "Telmoni CLI (macOS)" or similar. `/me` writes the session row, and answers its id (`sessionRowId`), which later sign-outs need.
 5. **Save** the credentials file, then print who signed in and their active organization.
 
-Signing in again overwrites the file without revoking the earlier session, which stays on the Sessions page until it ends there.
+Signing in again overwrites the file without revoking the earlier session, which stays under Active sessions until it ends there.
 
 ## The credentials file
 
@@ -111,7 +111,7 @@ The access token is short-lived. The CLI refreshes:
 
 The request is `POST /cli/auth/refresh` with `{ refreshToken, sessionRowId }`. `sessionRowId` is left out when unknown, never sent as null. The door converts the body to the platform's snake case.
 
-The answer replaces the access token and its expiry. ⚠ The platform rotates the refresh token on every use. A spent one presented again after a short grace ends the whole session, so the new refresh token must reach the file. The CLI saves it, and a failed save is an error.
+The answer replaces the access token, its expiry and the refresh token. ⚠ The platform rotates the refresh token on every use. A spent one presented again after a short grace ends the whole session, so the new refresh token must reach the file, and an answer that carries none leaves none stored — the next refresh then signs the CLI out (the table below). The CLI saves it, and a failed save is an error.
 
 ## When the session has ended
 
@@ -123,7 +123,7 @@ The answer replaces the access token and its expiry. ⚠ The platform rotates th
 | A 5xx, a 400/403/404/429, a network failure, a body that does not decode | **Kept.** ⚠ A 5xx or a dropped connection says nothing about whether the session is still live. |
 | Any error on `/v1`, under an API key | Kept |
 
-Ending a session from the Sessions page in the console therefore signs the CLI out on its next request.
+Ending a session under Active sessions in the console therefore signs the CLI out on its next request.
 
 ## Signing out
 
@@ -134,9 +134,9 @@ Ending a session from the Sessions page in the console therefore signs the CLI o
 3. **Refresh first**, if the token expires within 60 seconds.
 4. **Revoke.** `POST /cli/sessions/{sessionRowId}/revoke`. A 204, or a 404 (already gone), is success.
 5. **On a 400 or 403**, the cached organization may be stale. The CLI asks `/cli/me` without a header and retries with the organization it answers.
-6. **Delete the file, whatever the answer.** If the server did not confirm, a note on stderr says to end the session from the Sessions page in the console.
+6. **Delete the file, whatever the answer.** If the server did not confirm, a note on stderr says to end the session under Active sessions in the console.
 
-The door has no sign-out lane of its own, so the CLI signs out through the same revoke the Sessions page uses. That lane revokes any one of the person's own sessions, so a CLI's bearer could end a browser session too.
+The door has no sign-out lane of its own, so the CLI signs out through the same revoke Active sessions uses. That lane revokes any one of the person's own sessions, so a CLI's bearer could end a browser session too.
 
 ## API keys
 
@@ -145,7 +145,7 @@ The door has no sign-out lane of its own, so the CLI signs out through the same 
 - **Storing it.** It is kept in the credentials file as `api_key`, with the endpoint. `TELMONI_API_KEY` is read only by `login`, not by later commands.
 - **Using it.** It opens only `{endpoint}/v1` reads, never `/cli` (AGENTS.md). Today only `status` uses it, through `GET /v1/organization` (see [transport](transport.md#the-v1-client)).
 
-An API key is an organization's key, minted on one of its projects in the console. The platform checks it on every request: it must be live, its organization active, and the public API switched on.
+An API key is an organization's key, minted on one of its projects in the console. The platform checks it on every request: it must be live, its organization active, and the organization's beta access and the public API switched on.
 
 ## Where it disagrees with the platform
 
@@ -155,12 +155,11 @@ These are differences between the CLI's code and the platform's, found by readin
 |---|---|---|
 | Every 401 deletes the file | A rejected service secret between the console and the server is also a 401, with its own problem type | A botched `SERVICE_SECRET` rotation would sign out every CLI that ran `status` or `org switch` while it lasted |
 | A 401 on revoke reads as "already ended" | An expired bearer is a 401 too, while its session and refresh token live on | If logout could not refresh first, the session is left open with no warning |
-| Only `token-expired` is refreshed | Once the retention sweep deletes the expired bearer's row, the answer becomes "unknown token" | With a skewed local clock that skips the early refresh, the CLI deletes a session that refreshing would have saved |
+| Only `token-expired` is refreshed | Once the retention sweep deletes the expired bearer's row, the answer becomes `invalid-token` | With a skewed local clock that skips the early refresh, the CLI deletes a session that refreshing would have saved |
 | `slow_down` adds 5 s for good | The interval never grows. The check compares the database's clock with the process's. | Harmless: the CLI just polls more slowly |
 | 426 means "upgrade the CLI" | Nothing produces a 426 yet | None today |
 | A 404 on revoke is "already gone" | The door answers 404 for a session id that is not a UUID, before any hop | A credentials file whose `session_row_id` is malformed signs out locally with no note, and the session stays live. `/me` always answers a UUID, so only a hand-edited file gets there |
 | A slug is matched exactly | The console redirects a slug typed with a capital to the slug | `org switch Acme` is unknown; `acme` is the slug. Deliberate: a slug is lowercase, and loosening the match is a step towards the name, which is not a name here |
-| A comment calls the access token a JWT | The bearer is an opaque secret | None: nothing reads it |
 
 ## Where it lives
 

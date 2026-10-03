@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { Telmoni, DEFAULT_ENDPOINT, type Config } from '../src/index';
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('Telmoni TypeScript SDK', () => {
   it('should initialize with default config', () => {
@@ -19,6 +21,10 @@ describe('Telmoni TypeScript SDK', () => {
   });
 
   it('should initialize from environment', () => {
+    // The shell running the suite may point the CLI at a local stack; the
+    // SDK's default is what is under test.
+    vi.stubEnv('TELMONI_ENDPOINT', undefined);
+    vi.stubEnv('TELMONI_API_URL', undefined);
     const client = Telmoni.fromEnv();
     expect(client.config.endpoint).toBe(DEFAULT_ENDPOINT);
   });

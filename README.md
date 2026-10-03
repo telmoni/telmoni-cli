@@ -15,10 +15,11 @@ The official command-line interface (`telmoni`) and client SDKs for Telmoni.
 curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh
 ```
 
-Pin a specific release or override the install directory:
+Pin a specific release (`TELMONI_VERSION`) or override the install directory (`TELMONI_INSTALL_DIR`):
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | TELMONI_VERSION=0.0.1 sh
+curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | TELMONI_INSTALL_DIR=~/bin sh
 ```
 
 ### From Source (Rust toolchain required)
@@ -46,11 +47,11 @@ telmoni login
 The CLI prints a one-time verification code and URL. Approve the code in any browser on any machine:
 
 ```
-First copy your one-time code: ABCD-EFGH
-Then open https://telmoni.com/device and enter it.
+First copy your one-time code: BCDF-GHJK
+Then open https://telmoni.com/auth/device and enter it.
 ```
 
-Your session appears on the Active sessions page at `telmoni.com` (labelled e.g. "Telmoni CLI (macOS)"). Ending the session on the Active sessions page at telmoni.com ends the CLI's session.
+Your session appears under Active sessions on your account's Privacy page at `telmoni.com` (labelled e.g. "Telmoni CLI (macOS)"). Ending it there ends the CLI's session.
 
 Credentials are saved with `0600` permissions at `~/Library/Application Support/telmoni/credentials.json` on macOS and `~/.config/telmoni/credentials.json` on Linux. Credentials are not encrypted.
 
@@ -91,7 +92,7 @@ telmoni org switch org_xxxxxxxxxxxx
 telmoni org switch acme-robotics
 ```
 
-You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug. A script should carry the ID: a rename moves the slug, and the CLI resolves a slug against the organizations it cached at its last `status` or `org switch`, without asking the server.
+You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug. A script should carry the ID: the slug moves (a first name that reads as a slug replaces the placeholder, and after that a URL change in the console moves it), and the CLI resolves a slug against the organizations it cached at its last `login`, `status` or `org switch`, without asking the server.
 
 ### 4. Log Out
 
@@ -127,8 +128,8 @@ telmoni config get endpoint
 | Variable | Description |
 |---|---|
 | `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
-| `TELMONI_API_KEY` | Direct API key for CLI operations / CI |
-| `TELMONI_ORG` | Organization override for `status`, `whoami`, and `logout`: its ID, or its slug when typed by hand. Scripts carry the ID; a rename moves the slug. |
+| `TELMONI_API_KEY` | An API key for `telmoni login`; the CLI keeps it in the credentials file |
+| `TELMONI_ORG` | Organization override for `status`, `whoami`, and `logout`: its ID, or its slug when typed by hand. Scripts carry the ID; the slug moves (a first name that reads as a slug replaces the placeholder, and after that only a URL change moves it). |
 
 ---
 

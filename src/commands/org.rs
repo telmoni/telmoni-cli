@@ -77,8 +77,12 @@ async fn execute_switch(
     store: &CredentialsStore,
 ) -> Result<()> {
     // By id or slug, against the cache alone: an unknown one costs no request.
+    // `org list` reads the same cache, so it is `status` that refreshes it.
     let Some(target) = creds.organization_named(organization) else {
-        bail!("unknown organization {organization}; run telmoni org list");
+        bail!(
+            "unknown organization {organization}: not in the cached list; run telmoni status \
+             to refresh it, then telmoni org list"
+        );
     };
     let target_id = target.organization_id.clone();
 
@@ -90,11 +94,12 @@ async fn execute_switch(
         bail!("you are no longer in {organization}");
     }
 
-    // ⚠ The cache named the organization, and a slug moves: a rename takes
-    // it along and another organization may hold it since. So the list just
-    // answered has to give the organization the same name. It is kept either
-    // way, which is what lets the next run read the name as the console
-    // does; the active organization moves only when the name still holds.
+    // ⚠ The cache named the organization, and a slug moves: a URL change in
+    // the console takes it along and another organization may hold it since.
+    // So the list just answered has to give the organization the same name.
+    // It is kept either way, which is what lets the next run read the name as
+    // the console does; the active organization moves only when the name
+    // still holds.
     creds.update_from_me(&me, true);
     let holds = match creds.organization_named(organization) {
         Some(named) if named.organization_id == target_id => Ok(()),

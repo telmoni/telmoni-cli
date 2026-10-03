@@ -36,7 +36,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 ## What every request carries
 
-- **`User-Agent: telmoni-cli/<version> (<os>; <arch>)`**, set on the client, so it is on every request. The platform records it on the session, and the person sees "Telmoni CLI (macOS)" on their Sessions page.
+- **`User-Agent: telmoni-cli/<version> (<os>; <arch>)`**, set on the client, so it is on every request. The platform records it on the session, and the person sees "Telmoni CLI (macOS)" under Active sessions on their Privacy page.
 - **`Authorization: Bearer …`** on `/cli/me` and the session revoke (the access token), and on `/v1` (the API key). The device flow's start and poll, and the refresh, carry none; the refresh token travels in the body.
 - **`x-organization-id`** when the call acts inside an organization: `status`'s and `org switch`'s `/cli/me`, and the session revoke. It always carries the id, however the person named the organization (see [commands](commands.md#organizations)).
   - Calls that do not send it: login's first `/cli/me`, logout's fallback `/cli/me`, `/v1` (an API key is its organization), and a revoke when no organization is cached.
@@ -50,7 +50,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 | Answer | Printed as |
 |---|---|
 | An RFC 9457 problem (`application/problem+json`) | `title: detail`. `retry_after_secs` is read from the body, not the header. |
-| `{ "error": "…" }` (the shape `/v1` and some door refusals use) | That string |
+| `{ "error": "…" }` (nothing the CLI calls answers this shape today — the `/cli` door and `/v1` answer problem documents even for an unreachable server or database; the parser stays for whatever sits in front of them) | That string |
 | Anything else | `request failed (<status>)`, and the first characters of the body |
 | 426 | "this CLI is too old; upgrade it". Nothing on the platform sends a 426 yet. |
 
@@ -60,7 +60,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 `src/client.rs` is the CLI's only `/v1` call: `GET {endpoint}/v1/organization`, with the API key as the bearer.
 - The answer is the platform's snake-case organization: its id, its slug, its name, and its owner, or none.
-- The platform checks the key on every request: live, its organization active, the public API switched on.
+- The platform checks the key on every request: live, its organization active, the organization's beta access and the public API switched on.
 - The console's `/v1` relay allows only `GET` and `HEAD`, and meters each key and each source address.
 
 A `/v1` error never touches the credentials file. An API key's validity is the platform's to decide, request by request.

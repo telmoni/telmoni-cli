@@ -24,8 +24,8 @@ git commit -s -m "feat(commands): add organization switch command"
 
 - **Open an issue first for major changes.** Before starting work on new subcommands or significant structural changes, open an issue so design and scope can be aligned.
 - **Client of Telmoni Only:** The CLI communicates strictly with the Telmoni platform via HTTP/JSON (`TELMONI_ENDPOINT`). It does not run a server, access a database directly, or evaluate business logic.
-- **Zero Unhandled Panics:** Workspace clippy lints strictly deny `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, and `unreachable`. All fallible operations must use `Result` or `Option` with descriptive error messages.
-- **No Unsafe Code:** `#![forbid(unsafe_code)]` is enforced on every crate.
+- **Zero Unhandled Panics:** Workspace clippy lints deny `unwrap_used`, `expect_used`, `panic`, `indexing_slicing` and `string_slice`; `todo` and `unimplemented` warn, which the gate's `-D warnings` makes fatal. Tests are exempt from all but `string_slice` (`clippy.toml`). All fallible operations must use `Result` or `Option` with descriptive error messages.
+- **No Unsafe Code:** the workspace denies `unsafe_code`, and the CLI's library, its binary and `xtask` also `#![forbid(unsafe_code)]`.
 - **Security & Secret Hygiene:** Authentication follows the RFC 8628 device authorization grant through Telmoni's `/cli` door and token storage (`0600` file permissions). Never log or expose secrets, access tokens, refresh tokens, device codes, or API keys.
 - **Test Isolation:** Unit and integration tests must run without network access or real clock sleeps. Inject dependencies via traits and mock responses.
 
@@ -39,13 +39,14 @@ Every change must pass our workspace CI task runner:
 cargo xtask ci
 ```
 
-`cargo xtask ci` enforces with `--locked`:
-- `cargo fmt --all -- --check`
+`cargo xtask ci` enforces, `--locked` wherever cargo resolves dependencies:
+- `cargo fmt --all --check`
+- the toolchain channel in `rust-toolchain.toml` matching `rust-version` in `Cargo.toml`
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - `cargo build --workspace --locked`
 - `cargo test --workspace --locked`
 - `cargo doc --no-deps --workspace --locked`
-- `cargo deny check`
+- `cargo deny --locked check`
 
 For quick local iteration, you can run individual checks:
 
@@ -60,7 +61,7 @@ cargo test
 ## Submitting Pull Requests
 
 1. **Keep Pull Requests Focused:** Submit PRs that address a single issue or feature.
-2. **Commit Style:** Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `refactor:`, `chore:`).
+2. **Commit Style:** Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`).
 3. **Sign Your Commits:** Ensure every commit includes the DCO sign-off (`-s`).
 4. **No AI Signatures:** Do not include automated AI co-author or attribution tags in commits or PR bodies.
 5. **Ensure Clean CI:** Verify that `cargo xtask ci` passes cleanly before requesting review.

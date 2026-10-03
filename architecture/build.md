@@ -1,6 +1,6 @@
 # Build, release and CI
 
-The CLI ships as one binary per platform. It is built by `cargo xtask dist`, published by a tag-triggered workflow, and installed by `install.sh`, which checks the binary's checksum. A single gate, `cargo xtask ci`, runs the same checks locally and in CI.
+The CLI ships as one binary per platform. It is built by `cargo xtask dist`, published by a tag-triggered workflow, and installed by `install.sh`, which checks the archive's checksum. A single gate, `cargo xtask ci`, runs the same checks locally and in CI.
 
 ## Contents
 
@@ -25,10 +25,10 @@ Each step runs from the workspace root. Its command is echoed, and the first fai
 4. `cargo build --workspace --locked`, with `RUSTFLAGS="-D warnings"`
 5. `cargo test --workspace --locked`, with `RUSTFLAGS="-D warnings"`
 6. `cargo doc --no-deps --workspace --locked`, with `RUSTDOCFLAGS="-D warnings"`
-7. `cargo deny check`: advisories, bans, licenses and sources
+7. `cargo deny --locked check`: advisories, bans, licenses and sources
 
 Why it is built this way:
-- ⚠ **`--locked` everywhere.** The gate runs against the lockfile as committed. A build that would quietly resolve new versions fails instead. Any dependency change is the user's to approve (AGENTS.md).
+- ⚠ **`--locked` on every step that resolves dependencies** (fmt alone takes no such flag). The gate runs against the lockfile as committed. A build that would quietly resolve new versions fails instead. Any dependency change is the user's to approve (AGENTS.md).
 - **`--workspace` matters.** `default-members` is the CLI alone, so without it the gate would skip `xtask` and the Rust SDK.
 - **What the gate does not cover.** The TypeScript, Go and Python SDKs are outside it. CI runs them separately (see [CI](#ci)).
 
