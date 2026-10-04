@@ -19,10 +19,10 @@ That is deliberate. The platform's code is the contract, and an SDK grows a clie
 
 | SDK | Package | Configuration | Entry points |
 |---|---|---|---|
-| Rust | `telmoni-sdk` (`publish = false`) | `Config { endpoint, organization_id, auth_token }` | `Config::new`, `Client::new`, `from_env`, `with_config`, `config()`; `Telmoni` is an alias of `Client` |
+| Rust | `telmoni-sdk` (`publish = false`) | `Config { endpoint, organization_id, api_key }` | `Config::new`, `Client::new`, `from_env`, `with_config`, `config()`; `Telmoni` is an alias of `Client` |
 | TypeScript | `telmoni` | `Config { endpoint?, apiKey?, organizationId? }` | `new Telmoni(config)`, `Telmoni.fromEnv()`, the read-only `config` |
-| Go | `github.com/telmoni/telmoni-cli/sdk/go` | `Config{Endpoint, OrganizationID, AuthToken}` | `DefaultConfig`, `ConfigFromEnv`, `New`, `NewFromEnv`, `Config()`; `Telmoni` is an alias |
-| Python | `telmoni` | `@dataclass Config(endpoint, organization_id, auth_token)` | `Telmoni(config=None)`, `Telmoni.from_env()` |
+| Go | `github.com/telmoni/telmoni-cli/sdk/go` | `Config{Endpoint, OrganizationID, APIKey}` | `DefaultConfig`, `ConfigFromEnv`, `New`, `NewFromEnv`, `Config()`; `Telmoni` is an alias |
+| Python | `telmoni` | `@dataclass Config(endpoint, organization_id, api_key)` | `Telmoni(config=None)`, `Telmoni.from_env()` |
 
 Their dependencies are minimal:
 - **Rust:** serde only.
@@ -40,12 +40,10 @@ Each SDK defaults to `https://telmoni.com`, the same base URL as the CLI's `DEFA
 - **Nothing sends it today, and `/v1` could not take it.** `/v1` names no organization anywhere: a token is its organization, and the console's `/v1` relay forwards only `authorization`, `accept`, `content-type` and `content-length`. The field waits for a lane that takes one.
 - **Where the platform does read `x-organization-id`** (the person lanes behind the `/cli` door), the door refuses a value that is not an organization id before auth sees it: `400` `/errors/bad-request`, "x-organization-id is not an organization id". Auth's `/me` alone would read such a value as absent and answer the person's own organization, so a slug sent there by mistake would have acted elsewhere.
 
-They are not yet uniform at the edges:
+They read no other variable — no alias for the endpoint or the key, by the pre-launch rule — but they are not yet uniform at the edges:
 
 | Behaviour | Rust | TypeScript | Go | Python |
 |---|---|---|---|---|
-| `TELMONI_API_URL` as a fallback endpoint | no | yes | yes | yes |
-| `TELMONI_AUTH_TOKEN` as a fallback credential | no | yes | no | yes |
 | An empty `TELMONI_ENDPOINT` falls back to the default | no | yes | yes | yes |
 | An empty endpoint passed explicitly falls back to the default | no | yes | yes | no |
 
@@ -63,7 +61,7 @@ Each SDK has one contract test file:
 |---|---|---|---|---|
 | The default endpoint, as the constant and as the literal URL | yes | yes | the constant only | yes |
 | A trailing `/` is stripped | yes | yes | — | yes |
-| Building from the environment gives the default | non-empty only | yes, with `TELMONI_ENDPOINT` and `TELMONI_API_URL` cleared first | non-nil only | yes, with the two cleared first |
+| Building from the environment gives the default | non-empty only | yes, with `TELMONI_ENDPOINT` cleared first | non-nil only | yes, with `TELMONI_ENDPOINT` cleared first |
 
 Not pinned anywhere:
 - the environment variable names and their precedence (no test sets one; the TypeScript and Python tests only clear the endpoint's, so a shell pointed at a local stack does not fail them);
@@ -75,7 +73,7 @@ Go's example has no `// Output:` line, so it compiles but never runs. The TypeSc
 ## Credentials in configuration
 
 ⚠ **Each SDK's configuration can print its credential.**
-- In Rust, `Config` and `Client` derive `Debug`, and `Config` also derives `Serialize`, with the token included.
+- In Rust, `Config` and `Client` derive `Debug`, and `Config` also derives `Serialize`, with the key included.
 - Python's dataclass `repr` includes it.
 - Go's struct carries a JSON tag on it.
 

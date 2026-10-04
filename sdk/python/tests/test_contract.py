@@ -20,7 +20,6 @@ class TestTelmoniSdk(unittest.TestCase):
         # SDK's default is what is under test.
         with mock.patch.dict(os.environ):
             os.environ.pop("TELMONI_ENDPOINT", None)
-            os.environ.pop("TELMONI_API_URL", None)
             client = Telmoni.from_env()
         self.assertEqual(client.config.endpoint, DEFAULT_ENDPOINT)
 

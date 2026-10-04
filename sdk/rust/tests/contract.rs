@@ -14,7 +14,7 @@ fn custom_config_strips_trailing_slashes() {
     let config = Config {
         endpoint: "https://custom.endpoint///".to_string(),
         organization_id: None,
-        auth_token: None,
+        api_key: None,
     };
     let client = Telmoni::new(config);
     assert_eq!(client.config().endpoint, "https://custom.endpoint");

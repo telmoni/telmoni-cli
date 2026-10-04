@@ -15,7 +15,7 @@ pub struct Config {
     /// Organization ID (`org_…`).
     pub organization_id: Option<String>,
     /// The API key (`telmoni_…`, `TELMONI_API_KEY`); `/v1` takes no other bearer.
-    pub auth_token: Option<String>,
+    pub api_key: Option<String>,
 }
 
 impl Default for Config {
@@ -23,7 +23,7 @@ impl Default for Config {
         Self {
             endpoint: DEFAULT_ENDPOINT.to_string(),
             organization_id: None,
-            auth_token: None,
+            api_key: None,
         }
     }
 }
@@ -34,12 +34,12 @@ impl Config {
     pub fn new(
         endpoint: impl Into<String>,
         organization_id: Option<String>,
-        auth_token: Option<String>,
+        api_key: Option<String>,
     ) -> Self {
         Self {
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
             organization_id,
-            auth_token,
+            api_key,
         }
     }
 
@@ -55,12 +55,12 @@ impl Config {
             .to_string();
 
         let organization_id = std::env::var("TELMONI_ORG").ok();
-        let auth_token = std::env::var("TELMONI_API_KEY").ok();
+        let api_key = std::env::var("TELMONI_API_KEY").ok();
 
         Self {
             endpoint,
             organization_id,
-            auth_token,
+            api_key,
         }
     }
 }

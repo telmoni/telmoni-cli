@@ -12,7 +12,7 @@ const DefaultEndpoint = "https://telmoni.com"
 type Config struct {
 	Endpoint       string `json:"endpoint"`
 	OrganizationID string `json:"organization_id,omitempty"`
-	AuthToken      string `json:"auth_token,omitempty"`
+	APIKey         string `json:"api_key,omitempty"`
 }
 
 // DefaultConfig returns the default SDK configuration.
@@ -26,16 +26,13 @@ func DefaultConfig() Config {
 func ConfigFromEnv() Config {
 	endpoint := os.Getenv("TELMONI_ENDPOINT")
 	if endpoint == "" {
-		endpoint = os.Getenv("TELMONI_API_URL")
-	}
-	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
 
 	return Config{
 		Endpoint:       strings.TrimRight(endpoint, "/"),
 		OrganizationID: os.Getenv("TELMONI_ORG"),
-		AuthToken:      os.Getenv("TELMONI_API_KEY"),
+		APIKey:         os.Getenv("TELMONI_API_KEY"),
 	}
 }
 

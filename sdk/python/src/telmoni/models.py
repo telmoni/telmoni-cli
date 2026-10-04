@@ -10,7 +10,7 @@ DEFAULT_ENDPOINT = "https://telmoni.com"
 class Config:
     endpoint: str = DEFAULT_ENDPOINT
     organization_id: str | None = None
-    auth_token: str | None = None
+    api_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.endpoint:
@@ -18,15 +18,11 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        endpoint = (
-            os.getenv("TELMONI_ENDPOINT")
-            or os.getenv("TELMONI_API_URL")
-            or DEFAULT_ENDPOINT
-        )
-        auth_token = os.getenv("TELMONI_API_KEY") or os.getenv("TELMONI_AUTH_TOKEN")
+        endpoint = os.getenv("TELMONI_ENDPOINT") or DEFAULT_ENDPOINT
+        api_key = os.getenv("TELMONI_API_KEY")
         organization_id = os.getenv("TELMONI_ORG")
         return cls(
             endpoint=endpoint,
-            auth_token=auth_token,
+            api_key=api_key,
             organization_id=organization_id,
         )

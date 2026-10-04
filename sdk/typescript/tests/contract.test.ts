@@ -24,7 +24,6 @@ describe('Telmoni TypeScript SDK', () => {
     // The shell running the suite may point the CLI at a local stack; the
     // SDK's default is what is under test.
     vi.stubEnv('TELMONI_ENDPOINT', undefined);
-    vi.stubEnv('TELMONI_API_URL', undefined);
     const client = Telmoni.fromEnv();
     expect(client.config.endpoint).toBe(DEFAULT_ENDPOINT);
   });
