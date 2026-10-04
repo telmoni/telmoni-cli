@@ -53,6 +53,7 @@ sequenceDiagram
    - the console's `/auth/device` page, as a plain URL and as one carrying the code;
    - the code's lifetime and the polling interval.
 2. **Show it.** The user code and the plain URL go to stdout. The CLI tries to open the URL carrying the code in a browser (the plain URL, if the platform sent no such one), unless `--no-browser` is given. A failure there is a note on stderr, never an error.
+   - ⚠ **It opens the URL only on the endpoint's own origin** (`same_origin`: scheme, host and port). The answer is the server's, and one naming another host or scheme would hand the one-time code, and the machine's URL handler, to whatever it named. Such a URL is left to the person, with a note; it is printed above either way.
    - ⚠ **Nothing depends on the browser reaching this machine.** The CLI runs over SSH, in containers and on hosts with no browser. That is why it uses the device flow and not a loopback redirect. There is no listener and no PKCE (AGENTS.md).
 3. **Poll** (`poll_until_granted`). Each round sleeps first, then checks the code's lifetime on the local clock, then polls:
 

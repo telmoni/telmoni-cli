@@ -40,6 +40,20 @@ pub fn validate_api_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether `candidate` is on `endpoint`'s origin: the same scheme, host and
+/// port, the port read with its scheme's default filled in.
+pub fn same_origin(candidate: &str, endpoint: &str) -> bool {
+    let (Ok(candidate), Ok(endpoint)) = (
+        reqwest::Url::parse(candidate),
+        reqwest::Url::parse(endpoint),
+    ) else {
+        return false;
+    };
+    candidate.scheme() == endpoint.scheme()
+        && candidate.host_str() == endpoint.host_str()
+        && candidate.port_or_known_default() == endpoint.port_or_known_default()
+}
+
 /// Executes the `telmoni login` flow. `endpoint_env` is `TELMONI_ENDPOINT`
 /// as `main` read it.
 pub async fn execute(
@@ -84,8 +98,16 @@ async fn login_with_device_flow(
             .verification_uri_complete
             .as_deref()
             .unwrap_or(&start.verification_uri);
-        if let Err(e) = open::that(browser_url) {
-            eprintln!("note: could not open browser: {e}");
+        // Opened only on the endpoint's own origin: the answer is the
+        // server's, and one naming another host or scheme would hand the
+        // one-time code — and the machine's URL handler — to whatever it
+        // named. The address is printed above either way.
+        if same_origin(browser_url, &endpoint) {
+            if let Err(e) = open::that(browser_url) {
+                eprintln!("note: could not open browser: {e}");
+            }
+        } else {
+            eprintln!("note: the verification page is not on {endpoint}; open it yourself");
         }
     }
 
