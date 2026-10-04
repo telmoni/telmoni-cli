@@ -1,203 +1,51 @@
-# Telmoni CLI & Multi-Language SDKs
+# Telmoni CLI
 
 [![CI](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-The official command-line interface (`telmoni`) and client SDKs for Telmoni.
+`telmoni`, the command-line client for [Telmoni](https://github.com/telmoni/telmoni), and the client SDKs. It talks to one platform, `https://telmoni.com` unless `TELMONI_ENDPOINT` names another, and to nothing else.
 
----
-
-## Installation
-
-### Shell Installer (macOS & Linux)
+## Install
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh
 ```
 
-Pin a specific release (`TELMONI_VERSION`) or override the install directory (`TELMONI_INSTALL_DIR`):
+The installer fetches the latest release for Apple-silicon macOS or x86_64 Linux, checks it against the release's `SHA256SUMS`, and installs `telmoni` into `/usr/local/bin` or `~/.local/bin`. `TELMONI_VERSION` pins a release and `TELMONI_INSTALL_DIR` picks the directory. On another platform, build from source with the Rust toolchain:
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | TELMONI_VERSION=0.0.1 sh
-curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | TELMONI_INSTALL_DIR=~/bin sh
+cargo install --git https://github.com/telmoni/telmoni-cli.git --locked telmoni-cli
 ```
 
-### From Source (Rust toolchain required)
+## Use
 
 ```console
-git clone https://github.com/telmoni/telmoni-cli.git
-cd telmoni-cli
-cargo install --path . --locked
-```
-
----
-
-## CLI Usage
-
-### 1. Authentication
-
-#### Interactive Login (Device Authorization Grant, RFC 8628)
-
-Authenticate via device-code login through Telmoni's `/cli` door, signing in like the GitHub and Stripe CLIs:
-
-```console
-telmoni login
-```
-
-The CLI prints a one-time verification code and URL. Approve the code in any browser on any machine:
-
-```
-First copy your one-time code: BCDF-GHJK
-Then open https://telmoni.com/auth/device and enter it.
-```
-
-Your session appears under Active sessions on your account's Privacy page at `telmoni.com` (labelled e.g. "Telmoni CLI (macOS)"). Ending it there ends the CLI's session.
-
-Credentials are saved with `0600` permissions at `~/Library/Application Support/telmoni/credentials.json` on macOS and `~/.config/telmoni/credentials.json` on Linux. Credentials are not encrypted.
-
-#### Programmatic / CI Login (API Key)
-
-For automated environments, CI/CD runners, and headless servers, authenticate using a Telmoni API key:
-
-```console
-telmoni login --key telmoni_your_api_key_here
-```
-
-### 2. Verify Session Status
-
-```console
-telmoni status
-# Or alias:
-telmoni whoami
-```
-
-Output formatted as JSON:
-
-```console
-telmoni status --json
-```
-
-### 3. Organizations
-
-List organizations your account belongs to:
-
-```console
-telmoni org list
-```
-
-Switch your active organization context, by its ID or its slug (the first segment of its console URL):
-
-```console
-telmoni org switch org_xxxxxxxxxxxx
-telmoni org switch acme-robotics
-```
-
-You can also temporarily override the organization context for a single command invocation with `TELMONI_ORG=org_...`, or with its slug. A script should carry the ID: the slug moves (a first name that reads as a slug replaces the placeholder, and after that a URL change in the console moves it), and the CLI resolves a slug against the organizations it cached at its last `login`, `status` or `org switch`, without asking the server.
-
-### 4. Log Out
-
-```console
+telmoni login       # device-code sign-in: a code to type into any browser
+telmoni status      # who you are and the active organization (--json for scripts)
+telmoni org list    # the organizations you belong to; `org switch` changes the active one
 telmoni logout
 ```
 
-Revokes your CLI session row on the server and deletes the local credentials file.
+`telmoni login --key telmoni_…` signs in with an API key, for CI and servers. Every command, flag and variable is documented at [docs.telmoni.com/api/cli](https://docs.telmoni.com/api/cli/).
 
-### 5. Configuration
+## SDKs
 
-Configure CLI defaults such as the Telmoni endpoint:
+`sdk/` holds configuration-only scaffolds for TypeScript, Python, Go and Rust; each grows a client once its contract exists. See [docs.telmoni.com/api/sdks](https://docs.telmoni.com/api/sdks/).
 
-```console
-# List current configuration
-telmoni config list
-
-# Set a configuration value
-telmoni config set endpoint https://telmoni.com
-
-# Get a configuration value
-telmoni config get endpoint
-```
-
-#### Supported Configuration Keys
-
-| Key | Description | Default |
-|---|---|---|
-| `endpoint` | Telmoni endpoint URL | `https://telmoni.com` |
-
-#### Environment Variables
-
-| Variable | Description |
-|---|---|
-| `TELMONI_ENDPOINT` | Telmoni endpoint URL (default: `https://telmoni.com`) |
-| `TELMONI_API_KEY` | An API key for `telmoni login`; the CLI keeps it in the credentials file |
-| `TELMONI_ORG` | Organization override for `status`, `whoami`, and `logout`: its ID, or its slug when typed by hand. Scripts carry the ID; the slug moves (a first name that reads as a slug replaces the placeholder, and after that only a URL change moves it). |
-
----
-
-## Repository Layout
+## Layout
 
 ```text
-├── architecture/   # How the CLI and SDKs are built, and why
-├── src/            # Telmoni CLI source code (telmoni-cli crate)
-├── xtask/          # Dev orchestration (CI gate, release packaging)
-├── sdk/            # Multi-language client SDKs
-│   ├── go/         # Go SDK
-│   ├── python/     # Python SDK
-│   ├── rust/       # Rust SDK (telmoni-sdk crate)
-│   └── typescript/ # TypeScript / JavaScript SDK
-└── tests/          # Integration & contract tests
+src/            the CLI: commands, the device-flow sign-in, the HTTP transport
+sdk/            the SDK scaffolds: typescript/, python/, go/, rust/
+tests/          mock-based suites, no network
+xtask/          the gate (`cargo xtask ci`) and release packaging (`cargo xtask dist`)
+architecture/   how it is built, and why
 ```
 
----
+## Contributing
 
-## Multi-Language SDKs
+How to contribute, the AI policy, the Code of Conduct and the security policy are on the docs site: [docs.telmoni.com/contributing](https://docs.telmoni.com/contributing/introduction/). [Developing](https://docs.telmoni.com/contributing/developing/#the-cli-and-sdks) gets you building.
 
-The SDKs are scaffolds: configuration (endpoint, API key, organization) and nothing that calls the platform yet. Each grows a client once its contract exists.
+## License
 
-| Language | Directory | Package name |
-|---|---|---|
-| **TypeScript / JS** | [`sdk/typescript`](sdk/typescript/) | `telmoni` |
-| **Go** | [`sdk/go`](sdk/go/) | `github.com/telmoni/telmoni-cli/sdk/go` |
-| **Python** | [`sdk/python`](sdk/python/) | `telmoni` |
-| **Rust** | [`sdk/rust`](sdk/rust/) | `telmoni-sdk` |
-
----
-
-## Development & Testing
-
-Run the full local gate (formatting, strict clippy, tests, docs, dependency check):
-
-```console
-cargo xtask ci
-```
-
-Run tests across all SDKs:
-
-```console
-# TypeScript SDK
-cd sdk/typescript && npm run verify
-
-# Go SDK
-cd sdk/go && go test -v ./...
-
-# Python SDK
-sdk/python/.venv/bin/pytest sdk/python
-```
-
-For setting up and working on the code, see [DEVELOPMENT.md](DEVELOPMENT.md); for how it is built, see [architecture/](architecture/README.md).
-
----
-
-## Security
-
-Please report vulnerabilities following our [Security Policy](SECURITY.md). Do not open public issues for security vulnerabilities.
-
----
-
-## Community & License
-
-- [Contributing](CONTRIBUTING.md) — DCO requirements, code standards, and PR workflows.
-- [Code of Conduct](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
-- [Architecture](architecture/README.md) — How the CLI and SDKs are built, and why.
-- [Development Guide](DEVELOPMENT.md) — Setting up, running and checking the code.
-- [Security Policy](SECURITY.md) — Vulnerability reporting channels and safe harbor.
-- [License](LICENSE) — Licensed under the Apache License, Version 2.0.
+Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). Unless you say otherwise, a contribution you submit is licensed the same way.

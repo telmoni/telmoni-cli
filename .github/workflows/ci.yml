@@ -68,7 +68,7 @@ jobs:
         if: matrix.sdk == 'typescript'
         uses: actions/setup-node@v7
         with:
-          # The locked vitest's engines: 22.12+, 24 or 26+ (DEVELOPMENT.md).
+          # The locked vitest's engines: 22.12+, 24 or 26+.
           node-version: 22
 
       - name: Verify TypeScript SDK
