@@ -199,6 +199,14 @@ impl ReqwestTransport {
         let ua = build_user_agent();
         let client = reqwest::Client::builder()
             .user_agent(ua)
+            // No lane answers a redirect, and following one would resend the
+            // bearer to any same-host, same-port target whatever its scheme:
+            // reqwest strips `Authorization` only when the host or the known
+            // default port changes. A 3xx is answered as the error it is.
+            .redirect(reqwest::redirect::Policy::none())
+            // A server that stops answering mid-request would otherwise hold
+            // a poll forever.
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .context("building HTTP client")?;
         Ok(Self { client })

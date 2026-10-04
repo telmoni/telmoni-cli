@@ -32,7 +32,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 - **The host is read from the parsed URL.** An IPv6 address comes in brackets, and `localhost.example.com` is not this machine.
 - So `http://localhost:3000` works, and a plain-HTTP endpoint anywhere else fails at its first request. That includes a local platform reached by another name, from inside a container for one.
 
-**There is no client-side timeout.** The client sets only its user agent, and `reqwest` defaults to none. The console's door cuts its own hop to the platform's server at its upstream timeout, but a stalled connection to the console itself would wait indefinitely.
+**The client follows no redirect, and waits at most 30 seconds for an answer.** No lane answers a 3xx, and following one would resend the bearer to any same-host, same-port target whatever its scheme: `reqwest` strips `Authorization` only when the host or the known default port changes. So a 3xx is answered as the error it is. The timeout covers the whole request. The console's door cuts its own hop to the platform's server at its upstream timeout, but a console that stopped answering mid-request would otherwise have held a poll forever.
 
 ## What every request carries
 
