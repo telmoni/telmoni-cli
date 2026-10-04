@@ -1,4 +1,4 @@
-//! Authentication module for Telmoni CLI using RFC 8628 device flow and API tokens.
+//! Authentication module for Telmoni CLI using RFC 8628 device flow and API keys.
 
 pub mod device;
 pub mod storage;
