@@ -10,8 +10,8 @@ use crate::auth::storage::{Credentials, CredentialsStore, print_active_organizat
 use crate::config::{Config, resolve_endpoint};
 use crate::transport::Transport;
 
-/// Arguments for `telmoni login`.
-#[derive(Debug, Args)]
+/// Arguments for `telmoni login`. No `Debug`: `key` is the API key.
+#[derive(Args)]
 pub struct LoginArgs {
     /// Authenticate non-interactively using an API key.
     #[arg(long, env = "TELMONI_API_KEY")]

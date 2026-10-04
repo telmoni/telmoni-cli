@@ -70,7 +70,7 @@ A `/v1` error never touches the credentials file. An API key's validity is the p
 - The access token, the refresh token, the device code and the API key.
 - The user code, the verification URL and the endpoint are shown. They are not secrets.
 
-⚠ **`Debug` is derived unmasked** on `Credentials`, `AuthnResult`, `DeviceStart` and `LaneRequest`. No code formats them today. Formatting one, in a log line or a test failure, would print a token. The platform masks its equivalents by hand.
+⚠ **`Debug` is masked by hand** on `Credentials`, `AuthnResult`, `DeviceStart` and `LaneRequest`, as the platform masks its equivalents: a `{:?}` shows which secret is held (`***`), never its value, and a request body as `…`, since the poll and refresh bodies carry the device code and the refresh token. `LoginArgs` has no `Debug` at all: its `key` is the API key. No code formats any of them today; a failing assertion or a future log line would.
 
 ## Where it lives
 

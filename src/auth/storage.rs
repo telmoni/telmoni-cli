@@ -68,7 +68,7 @@ impl From<&crate::auth::device::Organization> for StoredOrganization {
 }
 
 /// Locally persisted credentials.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
     /// Authentication type.
     pub auth_type: AuthType,
@@ -93,6 +93,27 @@ pub struct Credentials {
     pub api_key: Option<String>,
     /// Last updated timestamp in Unix seconds.
     pub updated_at: i64,
+}
+
+/// The tokens and the key never print: a `{:?}` of the credentials — a
+/// failing assertion, a future log line — shows which are held, not what
+/// they are.
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("auth_type", &self.auth_type)
+            .field("endpoint", &self.endpoint)
+            .field("access_token", &self.access_token.as_ref().map(|_| "***"))
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "***"))
+            .field("expires_at", &self.expires_at)
+            .field("session_row_id", &self.session_row_id)
+            .field("person", &self.person)
+            .field("organizations", &self.organizations)
+            .field("active_organization_id", &self.active_organization_id)
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 impl Credentials {

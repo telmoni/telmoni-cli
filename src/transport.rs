@@ -5,7 +5,7 @@ use std::future::Future;
 use anyhow::Context;
 
 /// Request sent to a Telmoni lane.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LaneRequest {
     /// HTTP method.
     pub method: reqwest::Method,
@@ -17,6 +17,22 @@ pub struct LaneRequest {
     pub organization: Option<String>,
     /// JSON payload, if any.
     pub json: Option<serde_json::Value>,
+}
+
+/// Neither the bearer nor the body prints: a `{:?}` of a request — a failing
+/// assertion, a future log line — shows that each was sent, not what it was.
+/// The body carries the device code on the poll lane and the refresh token on
+/// the refresh lane.
+impl std::fmt::Debug for LaneRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaneRequest")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("bearer", &self.bearer.as_ref().map(|_| "***"))
+            .field("organization", &self.organization)
+            .field("json", &self.json.as_ref().map(|_| "…"))
+            .finish()
+    }
 }
 
 /// Raw response from a Telmoni lane.

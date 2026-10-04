@@ -10,7 +10,7 @@ use crate::auth::storage::{Credentials, CredentialsStore};
 use crate::transport::{LaneAnswer, LaneError, LaneRequest, Transport, parse_lane_error};
 
 /// Response from `POST /cli/auth/device`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceStart {
     /// Secret device code to poll with.
@@ -27,8 +27,23 @@ pub struct DeviceStart {
     pub interval: u64,
 }
 
+/// The device code is the one secret of the flow and never prints; the user
+/// code is the one code a person is shown.
+impl std::fmt::Debug for DeviceStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceStart")
+            .field("device_code", &"***")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .field("verification_uri_complete", &self.verification_uri_complete)
+            .field("expires_in", &self.expires_in)
+            .field("interval", &self.interval)
+            .finish()
+    }
+}
+
 /// Authentication result returned on successful authorization or refresh.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthnResult {
     /// User ID.
@@ -50,6 +65,23 @@ pub struct AuthnResult {
     pub expires_in: i64,
     /// Authentication method used.
     pub auth_method: Option<String>,
+}
+
+/// The tokens never print, as `Credentials` holds them.
+impl std::fmt::Debug for AuthnResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthnResult")
+            .field("user_id", &self.user_id)
+            .field("email", &self.email)
+            .field("email_verified", &self.email_verified)
+            .field("first_name", &self.first_name)
+            .field("last_name", &self.last_name)
+            .field("access_token", &"***")
+            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "***"))
+            .field("expires_in", &self.expires_in)
+            .field("auth_method", &self.auth_method)
+            .finish()
+    }
 }
 
 /// Person identity returned by `/cli/me`.
