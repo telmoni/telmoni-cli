@@ -14,7 +14,10 @@ use crate::transport::Transport;
 #[derive(Args)]
 pub struct LoginArgs {
     /// Authenticate non-interactively using an API key.
-    #[arg(long, env = "TELMONI_API_KEY")]
+    // clap's help prints an `env` argument's current value beside its name;
+    // hidden, so `telmoni login --help` on a host that exports the key does
+    // not write the key to the terminal or a CI log.
+    #[arg(long, env = "TELMONI_API_KEY", hide_env_values = true)]
     pub key: Option<String>,
 
     /// Target Telmoni endpoint URL (e.g. `https://telmoni.com`).

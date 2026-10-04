@@ -29,7 +29,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 |---|---|---|
 | `TELMONI_ENDPOINT` | `main`, and clap for `login --endpoint` | The base URL at sign-in, and for a signed-out `status` |
 | `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a first name that reads as a slug replaces the placeholder and any URL change moves it, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
-| `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. |
+| `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. `login --help` hides its value (`hide_env_values`): clap would otherwise print the exported key beside the flag, into a terminal or a CI log. |
 
 **Debug builds also read a `.env`** from the working directory, after the real environment. Release builds compile that out.
 - ⚠ A released binary run inside somebody else's checkout must not quietly take that checkout's endpoint or API key.
