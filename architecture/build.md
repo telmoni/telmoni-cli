@@ -106,7 +106,7 @@ There is no cross-compilation. Each platform is built natively by the release wo
 
 `TELMONI_INSTALL_DRY_RUN=1` prints the commands instead of running them.
 
-**The checksum file comes from the same release as the archive.** It catches a corrupted download, not a compromised release. Nothing is signed (see [Release](#release)).
+**The checksum file comes from the same release as the archive.** It catches a corrupted download, not a compromised release. The archive's provenance is what catches that, and `install.sh` does not check it: verifying needs `gh`, which a `curl … | sh` host may not have (see [Release](#release)).
 
 ## Release
 
@@ -118,10 +118,11 @@ There is no cross-compilation. Each platform is built natively by the release wo
 2. **`dist-macos` and `dist-linux`.** Each runs natively on its own runner, `macos-15` and `ubuntu-24.04`. Each runs `cargo xtask dist` and uploads its archive and `SHA256SUMS`. The release path does not run the gate itself; the gate already ran on the commit, in CI.
 3. **`publish`**, the only job with write permission:
    - It merges the two checksum files and adds `install.sh` and its hash.
+   - It attests the two archives and `install.sh` (`actions/attest`): SLSA build provenance, signed through Sigstore for this workflow's OIDC identity and stored with the repository's attestations. The job's `id-token` and `attestations` permissions are for that alone.
    - It creates the GitHub release from the tag (`--verify-tag --notes-from-tag`). A tag containing `-` is marked a prerelease.
    - Its assets are the two archives, `SHA256SUMS` and `install.sh`.
 
-The release has no signing or provenance: no attestation, cosign or GPG. Checksums are the only integrity check.
+**Checking a release.** `gh attestation verify <file> --repo telmoni/telmoni-cli` checks that the file was built by this repository's workflows; `--signer-workflow telmoni/telmoni-cli/.github/workflows/release.yml` narrows that to the release workflow. ⚠ Unlike the checksum, which sits beside the archive in the release, the provenance is signed for the workflow run that built the file: an asset swapped into the release afterwards has none. No key is kept anywhere: the signing certificate is minted per run. There is no GPG or cosign signature besides.
 
 ## CI
 

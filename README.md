@@ -17,6 +17,12 @@ The installer fetches the latest release for Apple-silicon macOS or x86_64 Linux
 cargo install --git https://github.com/telmoni/telmoni-cli.git --locked telmoni-cli
 ```
 
+Each release's archives and `install.sh` also carry build provenance, signed through Sigstore for the release workflow; with the GitHub CLI you can check a download against it:
+
+```console
+gh attestation verify telmoni-linux-x86_64.tar.gz --repo telmoni/telmoni-cli
+```
+
 ## Use
 
 ```console

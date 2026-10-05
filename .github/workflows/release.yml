@@ -93,6 +93,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # Build provenance: Sigstore signs it for this workflow's OIDC identity,
+      # so a release asset can be checked against this repository and this
+      # workflow rather than only against a checksum file from the same place.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -111,6 +116,13 @@ jobs:
           find built -name "SHA256SUMS" -exec cat {} + | sort -u > release/SHA256SUMS
           cp install.sh release/
           (cd release && sha256sum install.sh >> SHA256SUMS)
+
+      - name: Attest the release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release/telmoni-*.tar.gz
+            release/install.sh
 
       - name: Publish
         env:
