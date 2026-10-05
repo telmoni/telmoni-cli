@@ -1,9 +1,11 @@
 //! `telmoni config` command.
 
+use std::path::Path;
+
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::config::{get_config_value, load_config, set_config_value};
+use crate::config::{DEFAULT_TELMONI_ENDPOINT, get_config_value, load_config, set_config_value};
 
 /// Arguments for `telmoni config`.
 #[derive(Debug, Args)]
@@ -30,27 +32,27 @@ pub enum ConfigSubcommand {
     List,
 }
 
-/// Executes the `telmoni config` command.
-pub fn execute(args: ConfigArgs) -> Result<()> {
+/// Executes the `telmoni config` command against the configuration file at
+/// `path`.
+pub fn execute(args: ConfigArgs, path: &Path) -> Result<()> {
     match args.command {
-        ConfigSubcommand::Get { key } => match get_config_value(&key)? {
+        ConfigSubcommand::Get { key } => match get_config_value(path, &key)? {
             Some(val) => println!("{val}"),
             None => println!("(not set)"),
         },
         ConfigSubcommand::Set { key, value } => {
-            set_config_value(&key, &value)?;
+            set_config_value(path, &key, &value)?;
             println!("✓ Set {key} = {value}");
         }
         ConfigSubcommand::List => {
-            let config = load_config()?;
+            let config = load_config(path)?;
             println!("Telmoni CLI Configuration");
             println!("-------------------------");
             println!(
                 "  endpoint:      {}",
                 config
                     .endpoint
-                    .as_deref()
-                    .unwrap_or("(default: https://telmoni.com)")
+                    .unwrap_or_else(|| format!("(default: {DEFAULT_TELMONI_ENDPOINT})"))
             );
             println!(
                 "  output_format: {}",

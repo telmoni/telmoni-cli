@@ -1,8 +1,24 @@
 //! Transport seam and lane error parsing for Telmoni CLI.
 
 use std::future::Future;
+use std::time::Duration;
 
 use anyhow::Context;
+use tracing::debug;
+
+/// What `Debug` shows in place of a secret.
+pub(crate) const REDACTED: &str = "<redacted>";
+
+/// The longest a request may take, from connecting to the last byte of the
+/// answer: without one a stalled connection waits forever. Well past the
+/// console's own wait on the server (10 s: the `/cli` door's
+/// `UPSTREAM_TIMEOUT_MS`, the `/v1` relay's `READ_TIMEOUT_MS`), so its 503
+/// problem arrives first.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The longest connecting may take, within `REQUEST_TIMEOUT`: a host that
+/// never answers fails in seconds rather than at the end of the whole budget.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Request sent to a Telmoni lane.
 #[derive(Clone)]
@@ -19,24 +35,31 @@ pub struct LaneRequest {
     pub json: Option<serde_json::Value>,
 }
 
-/// Neither the bearer nor the body prints: a `{:?}` of a request — a failing
-/// assertion, a future log line — shows that each was sent, not what it was.
-/// The body carries the device code on the poll lane and the refresh token on
-/// the refresh lane.
+/// ⚠ By hand: the bearer is the access token or the API key, and a body
+/// carries the refresh token or the device code.
 impl std::fmt::Debug for LaneRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured, so a field added later has to be placed here: shown,
+        // or redacted.
+        let Self {
+            method,
+            url,
+            bearer,
+            organization,
+            json,
+        } = self;
         f.debug_struct("LaneRequest")
-            .field("method", &self.method)
-            .field("url", &self.url)
-            .field("bearer", &self.bearer.as_ref().map(|_| "***"))
-            .field("organization", &self.organization)
-            .field("json", &self.json.as_ref().map(|_| "…"))
+            .field("method", method)
+            .field("url", url)
+            .field("bearer", &bearer.as_ref().map(|_| REDACTED))
+            .field("organization", organization)
+            .field("json", &json.as_ref().map(|_| REDACTED))
             .finish()
     }
 }
 
 /// Raw response from a Telmoni lane.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LaneAnswer {
     /// HTTP status code.
     pub status: u16,
@@ -44,6 +67,23 @@ pub struct LaneAnswer {
     pub content_type: Option<String>,
     /// Raw body string.
     pub body: String,
+}
+
+/// ⚠ By hand: the body of a granted poll or a refresh carries the tokens, and
+/// the device start's the device code.
+impl std::fmt::Debug for LaneAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            status,
+            content_type,
+            body: _,
+        } = self;
+        f.debug_struct("LaneAnswer")
+            .field("status", status)
+            .field("content_type", content_type)
+            .field("body", &REDACTED)
+            .finish()
+    }
 }
 
 /// Abstract transport trait allowing deterministic unit testing without a network server.
@@ -86,15 +126,6 @@ impl std::error::Error for LaneError {}
 
 /// Parses non-2xx lane answers into a structured `LaneError`.
 pub fn parse_lane_error(answer: &LaneAnswer) -> LaneError {
-    if answer.status == 426 {
-        return LaneError {
-            status: answer.status,
-            problem_type: None,
-            message: "this CLI is too old; upgrade it".to_string(),
-            retry_after_secs: None,
-        };
-    }
-
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&answer.body) {
         if let Some(err) = parse_problem_json(&val, answer.status) {
             return err;
@@ -196,26 +227,44 @@ pub struct ReqwestTransport {
 impl ReqwestTransport {
     /// Creates a new `ReqwestTransport` with the standardized user agent.
     pub fn new() -> anyhow::Result<Self> {
-        let ua = build_user_agent();
         let client = reqwest::Client::builder()
-            .user_agent(ua)
+            .user_agent(build_user_agent())
             // No lane answers a redirect, and following one would resend the
             // bearer to any same-host, same-port target whatever its scheme:
             // reqwest strips `Authorization` only when the host or the known
             // default port changes. A 3xx is answered as the error it is.
             .redirect(reqwest::redirect::Policy::none())
-            // A server that stops answering mid-request would otherwise hold
-            // a poll forever.
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .context("building HTTP client")?;
         Ok(Self { client })
     }
 }
 
+/// The one line `main` prints for a request that got no answer. The cause at
+/// the bottom of the chain is what tells a refused connection, a name that
+/// does not resolve and a certificate that does not verify apart.
+fn request_failed(url: &str, err: &reqwest::Error) -> anyhow::Error {
+    if err.is_timeout() {
+        return anyhow::anyhow!("timed out waiting for {url}");
+    }
+    let mut cause: &dyn std::error::Error = err;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    anyhow::anyhow!("request to {url} failed: {cause}")
+}
+
 impl Transport for ReqwestTransport {
     async fn send(&self, req: LaneRequest) -> anyhow::Result<LaneAnswer> {
         refuse_cleartext(&req.url)?;
+        debug!(
+            method = %req.method,
+            url = %req.url,
+            organization = req.organization.as_deref(),
+            "request"
+        );
 
         let mut builder = self.client.request(req.method, &req.url);
         if let Some(token) = req.bearer {
@@ -231,7 +280,7 @@ impl Transport for ReqwestTransport {
         let resp = builder
             .send()
             .await
-            .with_context(|| format!("transport send failed for {}", req.url))?;
+            .map_err(|err| request_failed(&req.url, &err))?;
 
         let status = resp.status().as_u16();
         let content_type = resp
@@ -239,7 +288,11 @@ impl Transport for ReqwestTransport {
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
-        let body = resp.text().await.context("reading response body")?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|err| request_failed(&req.url, &err))?;
+        debug!(status, content_type = content_type.as_deref(), "answer");
 
         Ok(LaneAnswer {
             status,

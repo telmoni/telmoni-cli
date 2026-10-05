@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::auth::storage::{Credentials, CredentialsStore};
-use crate::transport::{LaneAnswer, LaneError, LaneRequest, Transport, parse_lane_error};
+use crate::transport::{LaneAnswer, LaneError, LaneRequest, REDACTED, Transport, parse_lane_error};
 
 /// Response from `POST /cli/auth/device`.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -27,17 +28,27 @@ pub struct DeviceStart {
     pub interval: u64,
 }
 
-/// The device code is the one secret of the flow and never prints; the user
-/// code is the one code a person is shown.
+/// ⚠ By hand: the device code is the secret the grant is polled with. The
+/// user code is shown anyway.
 impl std::fmt::Debug for DeviceStart {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured, so a field added later has to be placed here: shown,
+        // or redacted.
+        let Self {
+            device_code: _,
+            user_code,
+            verification_uri,
+            verification_uri_complete,
+            expires_in,
+            interval,
+        } = self;
         f.debug_struct("DeviceStart")
-            .field("device_code", &"***")
-            .field("user_code", &self.user_code)
-            .field("verification_uri", &self.verification_uri)
-            .field("verification_uri_complete", &self.verification_uri_complete)
-            .field("expires_in", &self.expires_in)
-            .field("interval", &self.interval)
+            .field("device_code", &REDACTED)
+            .field("user_code", user_code)
+            .field("verification_uri", verification_uri)
+            .field("verification_uri_complete", verification_uri_complete)
+            .field("expires_in", expires_in)
+            .field("interval", interval)
             .finish()
     }
 }
@@ -67,19 +78,32 @@ pub struct AuthnResult {
     pub auth_method: Option<String>,
 }
 
-/// The tokens never print, as `Credentials` holds them.
+/// ⚠ By hand: a derived `Debug` would print both tokens.
 impl std::fmt::Debug for AuthnResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured, so a field added later has to be placed here: shown,
+        // or redacted.
+        let Self {
+            user_id,
+            email,
+            email_verified,
+            first_name,
+            last_name,
+            access_token: _,
+            refresh_token,
+            expires_in,
+            auth_method,
+        } = self;
         f.debug_struct("AuthnResult")
-            .field("user_id", &self.user_id)
-            .field("email", &self.email)
-            .field("email_verified", &self.email_verified)
-            .field("first_name", &self.first_name)
-            .field("last_name", &self.last_name)
-            .field("access_token", &"***")
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "***"))
-            .field("expires_in", &self.expires_in)
-            .field("auth_method", &self.auth_method)
+            .field("user_id", user_id)
+            .field("email", email)
+            .field("email_verified", email_verified)
+            .field("first_name", first_name)
+            .field("last_name", last_name)
+            .field("access_token", &REDACTED)
+            .field("refresh_token", &refresh_token.as_ref().map(|_| REDACTED))
+            .field("expires_in", expires_in)
+            .field("auth_method", auth_method)
             .finish()
     }
 }
@@ -186,6 +210,11 @@ pub async fn start_device_auth(transport: &impl Transport, endpoint: &str) -> Re
     if answer.status == 200 {
         let start: DeviceStart =
             serde_json::from_str(&answer.body).context("decoding device authorization response")?;
+        debug!(
+            expires_in = start.expires_in,
+            interval = start.interval,
+            "device code issued"
+        );
         return Ok(start);
     }
 
@@ -235,12 +264,11 @@ fn parse_poll_answer(answer: &LaneAnswer) -> Result<PollOutcome> {
                 Ok(PollOutcome::Pending)
             }
         }
-        401 => Ok(PollOutcome::Failed(
-            "the device code is no longer valid; run telmoni login again".to_string(),
-        )),
-        426 => Ok(PollOutcome::Failed(
-            "this CLI is too old; upgrade it".to_string(),
-        )),
+        401 if parse_lane_error(answer).problem_type.as_deref() == Some(INVALID_TOKEN) => {
+            Ok(PollOutcome::Failed(
+                "the device code is no longer valid; run telmoni login again".to_string(),
+            ))
+        }
         429 => {
             let lane_err = parse_lane_error(answer);
             Ok(PollOutcome::RateLimited {
@@ -282,15 +310,23 @@ where
         }
 
         match poll().await? {
-            PollOutcome::Granted(authn) => return Ok(authn),
-            PollOutcome::Pending => {}
+            PollOutcome::Granted(authn) => {
+                debug!("approved");
+                return Ok(authn);
+            }
+            PollOutcome::Pending => debug!("not approved yet"),
             PollOutcome::SlowDown => {
                 current_interval += Duration::from_secs(5);
+                debug!(
+                    interval_secs = current_interval.as_secs(),
+                    "asked to slow down"
+                );
             }
             PollOutcome::RateLimited { retry_after_secs } => {
                 let dur = retry_after_secs.map_or(current_interval, |s| {
                     Duration::from_secs(s).max(current_interval)
                 });
+                debug!(wait_secs = dur.as_secs(), "rate limited");
                 next_sleep = Some(dur);
             }
             PollOutcome::Failed(msg) => bail!("{msg}"),
@@ -363,6 +399,53 @@ pub async fn refresh_tokens(
     bail!(lane_err)
 }
 
+/// A bearer that expired. The platform keeps its row a while.
+const TOKEN_EXPIRED: &str = "/errors/auth/token-expired";
+
+/// A token the platform does not know. On a bearer lane that includes an
+/// expired bearer once the retention sweep has deleted its row, so it is not
+/// proof the session ended; on the refresh lane the refresh token is gone,
+/// and the session with it.
+const INVALID_TOKEN: &str = "/errors/auth/invalid-token";
+
+/// A revoked session, or an account being deleted.
+const UNAUTHENTICATED: &str = "/errors/auth/unauthenticated";
+
+/// The session is over: the platform said so, or nothing is left to renew it
+/// with. The credentials file is gone by the time this is returned.
+#[derive(Debug)]
+pub struct SessionEnded;
+
+impl std::fmt::Display for SessionEnded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session ended; run telmoni login")
+    }
+}
+
+impl std::error::Error for SessionEnded {}
+
+/// The problem type of a 401 that speaks about the caller's own credentials.
+/// ⚠ Any other 401 ends nothing: the console failing its own hop to the
+/// server (`/errors/auth/service-credential-rejected`) is a 401 too, and
+/// says nothing about this session.
+pub(crate) fn refused_credentials(err: &anyhow::Error) -> Option<&'static str> {
+    let lane_err = err
+        .downcast_ref::<LaneError>()
+        .filter(|e| e.status == 401)?;
+    [TOKEN_EXPIRED, INVALID_TOKEN, UNAUTHENTICATED]
+        .into_iter()
+        .find(|t| lane_err.problem_type.as_deref() == Some(*t))
+}
+
+/// Whether a bearer lane's refusal is one a refresh may cure. The bearer
+/// lives minutes, and a clock that runs slow here skips the early refresh.
+pub(crate) fn bearer_expired(err: &anyhow::Error) -> bool {
+    matches!(
+        refused_credentials(err),
+        Some(TOKEN_EXPIRED | INVALID_TOKEN)
+    )
+}
+
 /// Refreshes access tokens if expired or expiring within 60 seconds.
 pub async fn refresh_if_needed(
     transport: &impl Transport,
@@ -380,33 +463,39 @@ pub async fn refresh_if_needed(
         return Ok(());
     }
 
-    let rt = match creds.refresh_token.as_ref() {
-        Some(rt) => rt.clone(),
-        None => {
-            let _ = store.clear();
-            bail!("session ended; run telmoni login");
-        }
-    };
+    debug!("refreshing: the access token expires within 60 seconds, or its expiry is unknown");
+    refresh_session(transport, store, creds).await
+}
 
-    let res = refresh_tokens(
+/// Refreshes the session's tokens and saves them: the platform rotates the
+/// refresh token on every use, so the new one has to reach the file.
+pub(crate) async fn refresh_session(
+    transport: &impl Transport,
+    store: &CredentialsStore,
+    creds: &mut Credentials,
+) -> Result<()> {
+    let Some(rt) = creds.refresh_token.clone() else {
+        debug!("no refresh token held");
+        return Err(session_ended(store));
+    };
+    let authn = refresh_tokens(
         transport,
         &creds.endpoint,
         &rt,
         creds.session_row_id.as_deref(),
     )
-    .await;
-
-    match res {
-        Ok(authn) => apply_refresh(store, creds, authn),
-        Err(err) => Err(ended_on_401(store, err)),
-    }
+    .await
+    .map_err(|err| ended_or_surfaced(store, err))?;
+    creds.apply_refresh(&authn);
+    store.save(creds)
 }
 
 /// `POST /cli/me` for the stored session, held to the platform's 401 rules: a
-/// problem typed `/errors/auth/token-expired` is cured by one refresh and one
-/// retry, and any other 401 means the session was ended elsewhere, so the
-/// credentials file goes. Nothing else deletes it: a 5xx or a dropped
-/// connection says nothing about whether the session is still live.
+/// bearer refused as expired or unknown gets one refresh, which decides
+/// whether the session lives, and one retry; a refusal that speaks about the
+/// session means it was ended elsewhere, so the credentials file goes.
+/// Nothing else deletes it: a 5xx or a dropped connection says nothing about
+/// whether the session is still live.
 pub async fn fetch_me_for_session(
     transport: &impl Transport,
     store: &CredentialsStore,
@@ -418,53 +507,38 @@ pub async fn fetch_me_for_session(
         Ok(me) => return Ok(me),
         Err(err) => err,
     };
-    let token_expired = err.downcast_ref::<LaneError>().is_some_and(|e| {
-        e.status == 401 && e.problem_type.as_deref() == Some("/errors/auth/token-expired")
-    });
-    if !token_expired {
-        return Err(ended_on_401(store, err));
+    if !bearer_expired(&err) {
+        return Err(ended_or_surfaced(store, err));
     }
 
-    let Some(rt) = creds.refresh_token.clone() else {
-        let _ = store.clear();
-        bail!("session ended; run telmoni login");
-    };
-    let authn = refresh_tokens(
-        transport,
-        &creds.endpoint,
-        &rt,
-        creds.session_row_id.as_deref(),
-    )
-    .await
-    .map_err(|err| ended_on_401(store, err))?;
-    let fresh = authn.access_token.clone();
-    apply_refresh(store, creds, authn)?;
-
+    debug!(
+        problem_type = refused_credentials(&err),
+        "the bearer was refused; refreshing once"
+    );
+    refresh_session(transport, store, creds).await?;
+    let fresh = creds.access_token.clone().context("missing access token")?;
     fetch_me(transport, &creds.endpoint, &fresh, organization_id)
         .await
-        .map_err(|err| ended_on_401(store, err))
+        .map_err(|err| ended_or_surfaced(store, err))
 }
 
-fn apply_refresh(
-    store: &CredentialsStore,
-    creds: &mut Credentials,
-    authn: AuthnResult,
-) -> Result<()> {
-    creds.apply_refresh(&authn);
-    store.save(creds)
-}
-
-/// A 401 on a session lane ends the session here too; any other failure
-/// leaves the credentials file alone and surfaces the server's message.
-fn ended_on_401(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Error {
+/// A refusal that speaks about the caller's credentials ends the session, and
+/// the credentials file goes. Any other failure leaves the file alone and
+/// surfaces the server's message.
+fn ended_or_surfaced(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Error {
+    if let Some(problem_type) = refused_credentials(&err) {
+        debug!(problem_type, "the session has ended");
+        return session_ended(store);
+    }
     match err.downcast_ref::<LaneError>() {
-        Some(lane_err) if lane_err.status == 401 => {
-            let _ = store.clear();
-            anyhow::anyhow!("session ended; run telmoni login")
-        }
         Some(lane_err) => anyhow::anyhow!("{}", lane_err.message),
         None => err,
     }
+}
+
+fn session_ended(store: &CredentialsStore) -> anyhow::Error {
+    let _ = store.clear();
+    anyhow::Error::new(SessionEnded)
 }
 
 /// Revokes a CLI session via `POST {endpoint}/cli/sessions/{sessionRowId}/revoke`.
@@ -489,10 +563,16 @@ pub async fn revoke_session(
     };
 
     let answer = transport.send(req).await?;
-    if answer.status == 204 || answer.status == 404 {
+    if answer.status == 204 {
         return Ok(());
     }
 
+    // ⚠ A 404 is "already gone" only as auth types it. The door's own 404,
+    // for a path no lane matches (a session id that is not a UUID), leaves
+    // the session as live as it was.
     let lane_err = parse_lane_error(&answer);
+    if answer.status == 404 && lane_err.problem_type.as_deref() == Some("/errors/auth/not-found") {
+        return Ok(());
+    }
     bail!(lane_err)
 }

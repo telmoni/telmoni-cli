@@ -49,7 +49,6 @@ impl MockTransport {
         }
     }
 
-    #[expect(dead_code, reason = "helper for failure-injection test cases")]
     fn push_error(&self, err: anyhow::Error) {
         if let Ok(mut answers) = self.answers.lock() {
             answers.push_back(Err(err));
@@ -237,15 +236,19 @@ fn test_lane_error_parser() {
     assert_eq!(err5.status, 502);
     assert_eq!(err5.message, "request failed (502) bad gateway from proxy");
 
-    // 426 upgrade
+    // 426, as the platform defines it: its detail names both versions, so it
+    // reads like any other problem rather than as a message of the CLI's own
     let answer6 = LaneAnswer {
         status: 426,
-        content_type: None,
-        body: "".to_string(),
+        content_type: Some("application/problem+json".to_string()),
+        body: r#"{"type":"/errors/incompatible-client","title":"incompatible client","status":426,"detail":"Telmoni CLI 0.0.1 is older than the minimum supported 0.1.0; upgrade to continue"}"#.to_string(),
     };
     let err6 = parse_lane_error(&answer6);
     assert_eq!(err6.status, 426);
-    assert_eq!(err6.message, "this CLI is too old; upgrade it");
+    assert_eq!(
+        err6.message,
+        "incompatible client: Telmoni CLI 0.0.1 is older than the minimum supported 0.1.0; upgrade to continue"
+    );
 }
 
 // 4. poll_once: 200, each 202, 429, 401, 403
@@ -1075,17 +1078,19 @@ async fn test_api_key_login_and_status() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    // Login with API key - no network call
+    // Login with API key - no network call, no browser, no waiting
     login::execute(
         login::LoginArgs {
             key: Some("telmoni_test_api_key".to_string()),
             endpoint: Some("https://telmoni.com".to_string()),
-            no_browser: true,
+            no_browser: false,
         },
         &transport,
         &store,
         &config,
         None,
+        |_: &str| -> std::io::Result<()> { panic!("an API key login opens no browser") },
+        |_| async { panic!("an API key login does not poll") },
     )
     .await
     .unwrap();
@@ -1602,6 +1607,31 @@ fn device_creds(orgs: &[&str], active: &str) -> Credentials {
 
 const TOKEN_EXPIRED: &str =
     r#"{"type":"/errors/auth/token-expired","title":"token expired","status":401}"#;
+
+/// What auth answers for a token it does not know, an expired bearer the
+/// retention sweep has deleted among them.
+const INVALID_TOKEN: &str =
+    r#"{"type":"/errors/auth/invalid-token","title":"invalid token","status":401}"#;
+
+/// What auth answers for a revoked session.
+const UNAUTHENTICATED: &str =
+    r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#;
+
+/// What auth answers when the console's own service secret is refused: a 401
+/// that says nothing about the person's session.
+const SERVICE_CREDENTIAL_REJECTED: &str = r#"{"type":"/errors/auth/service-credential-rejected","title":"service credential rejected","status":401}"#;
+
+/// A refresh as the platform grants one.
+const FRESH_TOKENS: &str =
+    r#"{"userId":"usr_1","accessToken":"fresh","refreshToken":"rt2","expiresIn":900}"#;
+
+/// `/cli/me` for `device_creds(&["org_1"], "org_1")`'s person.
+const ME_IN_ORG_1: &str = r#"{
+    "person": { "userId": "usr_1", "email": "alice@example.com" },
+    "organizations": [ { "organizationId": "org_1", "slug": "org-1", "name": "Org 1", "role": "member" } ],
+    "activeOrganizationId": "org_1",
+    "sessionRowId": "0192a3b4-1111"
+}"#;
 
 // 16. A server failure while curing an expired token never deletes credentials
 #[tokio::test]
@@ -2238,4 +2268,613 @@ async fn test_slug_moved_since_cached() {
     {
         assert_eq!(request.organization.as_deref(), Some(organization));
     }
+}
+
+// 24. Debug never prints a secret, whichever struct holds it: no token,
+//     refresh token, device code or API key. What is not secret still shows.
+#[test]
+fn test_debug_never_prints_a_secret() {
+    use telmoni_cli::auth::device::DeviceStart;
+    use telmoni_cli::commands::login::LoginArgs;
+
+    let mut device = device_creds(&["org_1"], "org_1");
+    device.access_token = Some("secret_access".to_string());
+    device.refresh_token = Some("secret_refresh".to_string());
+    let api_key = Credentials::for_api_key(
+        "https://telmoni.com".to_string(),
+        "telmoni_secret_key".to_string(),
+    );
+    let request = LaneRequest {
+        method: reqwest::Method::POST,
+        url: "https://telmoni.com/cli/auth/refresh".to_string(),
+        bearer: Some("secret_access".to_string()),
+        organization: Some("org_1".to_string()),
+        json: Some(serde_json::json!({ "refreshToken": "secret_refresh" })),
+    };
+    let answer = LaneAnswer {
+        status: 200,
+        content_type: Some("application/json".to_string()),
+        body: r#"{"accessToken":"secret_access","refreshToken":"secret_refresh"}"#.to_string(),
+    };
+    let start: DeviceStart = serde_json::from_str(DEVICE_START).unwrap();
+    let granted = PollOutcome::Granted(
+        serde_json::from_str::<AuthnResult>(
+            r#"{"userId":"usr_1","accessToken":"secret_access","refreshToken":"secret_refresh","expiresIn":900}"#,
+        )
+        .unwrap(),
+    );
+    let args = LoginArgs {
+        key: Some("telmoni_secret_key".to_string()),
+        endpoint: None,
+        no_browser: true,
+    };
+
+    let printed = [
+        format!("{device:?}"),
+        format!("{api_key:#?}"),
+        format!("{request:?}"),
+        format!("{answer:?}"),
+        format!("{start:?}"),
+        format!("{granted:?}"),
+        format!("{args:?}"),
+    ];
+    for out in &printed {
+        for secret in [
+            "secret_access",
+            "secret_refresh",
+            "secret_device_code",
+            "telmoni_secret_key",
+        ] {
+            assert!(!out.contains(secret), "{secret} printed in {out}");
+        }
+        assert!(out.contains("<redacted>"), "{out}");
+    }
+    assert!(printed[0].contains("org_1"), "{}", printed[0]);
+    assert!(
+        printed[2].contains("https://telmoni.com/cli/auth/refresh"),
+        "{}",
+        printed[2]
+    );
+    assert!(printed[4].contains("BCDF-GHJK"), "the user code is shown");
+}
+
+// 25. A 401 on /cli/me is read by its type. One the console answers for its
+//     own hop to the server says nothing of the session, which is kept; one
+//     for an unknown bearer, which an expired one is once swept, gets the
+//     refresh that decides; one for a session that is over ends it at once.
+#[tokio::test]
+async fn test_status_reads_a_401_by_its_type() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let config = Config::default();
+    let status = || {
+        status::execute(
+            status::StatusArgs { json: false },
+            &transport,
+            &store,
+            &config,
+            None,
+            None,
+        )
+    };
+
+    // 25a. service-credential-rejected on /cli/me: kept, and said as auth says it
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    let err = status().await.unwrap_err();
+    assert_eq!(err.to_string(), "service credential rejected");
+    assert!(store.path.exists());
+
+    // 25b. and on the refresh an expiring bearer asks for first
+    let mut expiring = device_creds(&["org_1"], "org_1");
+    expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    store.save(&expiring).unwrap();
+    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    status().await.unwrap_err();
+    assert!(store.path.exists());
+
+    // 25c. invalid-token on /cli/me for a session that lives: one refresh, one retry
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_answer(401, INVALID_TOKEN);
+    transport.push_answer(200, FRESH_TOKENS);
+    transport.push_answer(200, ME_IN_ORG_1);
+    status().await.unwrap();
+    assert_eq!(
+        store.load().unwrap().unwrap().access_token.as_deref(),
+        Some("fresh")
+    );
+
+    // 25d. invalid-token on /cli/me, and the refresh refused too: it has ended
+    transport.push_answer(401, INVALID_TOKEN);
+    transport.push_answer(401, INVALID_TOKEN);
+    let err = status().await.unwrap_err();
+    assert_eq!(err.to_string(), "session ended; run telmoni login");
+    assert!(!store.path.exists());
+
+    // 25e. unauthenticated on /cli/me: ended, with no refresh
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_answer(401, UNAUTHENTICATED);
+    let err = status().await.unwrap_err();
+    assert_eq!(err.to_string(), "session ended; run telmoni login");
+    assert!(!store.path.exists());
+
+    let reqs = transport.requests.lock().unwrap();
+    let paths: Vec<&str> = reqs
+        .iter()
+        .map(|r| r.url.trim_start_matches("https://telmoni.com"))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "/cli/me",
+            "/cli/auth/refresh",
+            "/cli/me",
+            "/cli/auth/refresh",
+            "/cli/me",
+            "/cli/me",
+            "/cli/auth/refresh",
+            "/cli/me",
+        ]
+    );
+    assert_eq!(reqs[4].bearer.as_deref(), Some("fresh"));
+}
+
+// 26. Signing out under the same rules. A revoke refused as an expired bearer
+//     (a clock that runs slow here skipped the early refresh) is refreshed and
+//     sent again; one refused as unknown, with the refresh refused too, had
+//     already ended, as had one refused as a session that is over. One the
+//     platform refused on its own account, a 404 that is not auth's "session
+//     not found", an expired bearer with nothing to renew it, and no answer at
+//     all are not confirmed; logout says so and deletes the file regardless.
+#[tokio::test]
+async fn test_end_session_reads_a_401_by_its_type() {
+    use telmoni_cli::commands::logout::end_session;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let take = || std::mem::take(&mut *transport.requests.lock().unwrap());
+
+    // 26a. an expired bearer: refreshed, and the revoke sent again with the new one
+    let mut creds = device_creds(&["org_1"], "org_1");
+    store.save(&creds).unwrap();
+    transport.push_answer(401, TOKEN_EXPIRED);
+    transport.push_answer(200, FRESH_TOKENS);
+    transport.push_answer(204, "");
+    end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap();
+    let reqs = take();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs[0].bearer.as_deref(), Some("at"));
+    assert!(reqs[1].url.ends_with("/cli/auth/refresh"));
+    assert_eq!(
+        reqs[2].url,
+        "https://telmoni.com/cli/sessions/0192a3b4-1111/revoke"
+    );
+    assert_eq!(reqs[2].bearer.as_deref(), Some("fresh"));
+    assert_eq!(reqs[2].organization.as_deref(), Some("org_1"));
+
+    // 26b. an unknown bearer, and the refresh refused too: already ended
+    let mut creds = device_creds(&["org_1"], "org_1");
+    transport.push_answer(401, INVALID_TOKEN);
+    transport.push_answer(401, INVALID_TOKEN);
+    end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap();
+    assert_eq!(take().len(), 2);
+
+    // 26c. a session that is over: already ended, with no refresh
+    let mut creds = device_creds(&["org_1"], "org_1");
+    transport.push_answer(401, UNAUTHENTICATED);
+    end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap();
+    assert_eq!(take().len(), 1);
+
+    // 26d. refused on the platform's own account: not confirmed, and no refresh
+    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    let err = end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "service credential rejected");
+    assert_eq!(take().len(), 1);
+
+    // 26e. the door's own 404, for a path no lane matches: not confirmed
+    transport.push_answer(
+        404,
+        r#"{"type":"/errors/not-found","title":"not found","status":404,"detail":"no such lane"}"#,
+    );
+    let err = end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "not found: no such lane");
+    take();
+
+    // 26f. an expired bearer and no refresh token to renew it: proves nothing
+    creds.refresh_token = None;
+    transport.push_answer(401, TOKEN_EXPIRED);
+    let err = end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "token expired");
+    assert_eq!(take().len(), 1);
+
+    // 26g. no answer at all
+    transport.push_error(anyhow::anyhow!(
+        "timed out waiting for https://telmoni.com/cli/sessions/0192a3b4-1111/revoke"
+    ));
+    let err = end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().starts_with("timed out waiting for"));
+    take();
+
+    // 26h. logout deletes the file whatever the answer
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
+        .await
+        .unwrap();
+    assert!(!store.path.exists());
+}
+
+// 27. logout under an API key ends nothing on the server: no request, and
+//     the file goes
+#[tokio::test]
+async fn test_logout_with_an_api_key() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+    store
+        .save(&Credentials::for_api_key(
+            "https://telmoni.com".to_string(),
+            "telmoni_key".to_string(),
+        ))
+        .unwrap();
+
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
+        .await
+        .unwrap();
+
+    assert!(!store.path.exists());
+    assert!(transport.requests.lock().unwrap().is_empty());
+}
+
+// 28. A request that got no answer, a refused connection or a timeout, says
+//     nothing about the session: the credentials file stays, and the failure
+//     is what the person reads
+#[tokio::test]
+async fn test_network_failures_keep_credentials() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let config = Config::default();
+    let status = || {
+        status::execute(
+            status::StatusArgs { json: false },
+            &transport,
+            &store,
+            &config,
+            None,
+            None,
+        )
+    };
+    let no_answer = || anyhow::anyhow!("timed out waiting for https://telmoni.com/cli/me");
+
+    // 28a. /cli/me
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_error(no_answer());
+    let err = status().await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "timed out waiting for https://telmoni.com/cli/me"
+    );
+    assert!(store.path.exists());
+
+    // 28b. the refresh an expiring bearer asks for
+    let mut expiring = device_creds(&["org_1"], "org_1");
+    expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    store.save(&expiring).unwrap();
+    transport.push_error(no_answer());
+    refresh_if_needed(&transport, &store, &mut expiring)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        store.load().unwrap().unwrap().refresh_token.as_deref(),
+        Some("rt")
+    );
+
+    // 28c. the refresh that would cure an expired bearer
+    store.save(&device_creds(&["org_1"], "org_1")).unwrap();
+    transport.push_answer(401, TOKEN_EXPIRED);
+    transport.push_error(no_answer());
+    status().await.unwrap_err();
+    assert!(store.path.exists());
+
+    // 28d. /v1 under an API key
+    store
+        .save(&Credentials::for_api_key(
+            "https://telmoni.com".to_string(),
+            "telmoni_key".to_string(),
+        ))
+        .unwrap();
+    transport.push_error(anyhow::anyhow!(
+        "request to https://telmoni.com/v1/organization failed: Connection refused (os error 111)"
+    ));
+    status().await.unwrap_err();
+    assert!(store.path.exists());
+}
+
+/// A device start as the platform answers one: five seconds, ten minutes.
+const DEVICE_START: &str = r#"{
+    "deviceCode": "secret_device_code",
+    "userCode": "BCDF-GHJK",
+    "verificationUri": "https://telmoni.com/auth/device",
+    "verificationUriComplete": "https://telmoni.com/auth/device?code=BCDF-GHJK",
+    "expiresIn": 600,
+    "interval": 5
+}"#;
+
+/// A granted poll.
+const GRANTED: &str =
+    r#"{"userId":"usr_1","accessToken":"at_new","refreshToken":"rt_new","expiresIn":900}"#;
+
+/// `telmoni login` through the device flow, with a browser that opens nothing
+/// and waits that take no time.
+async fn device_login(transport: &MockTransport, store: &CredentialsStore) -> anyhow::Result<()> {
+    use telmoni_cli::commands::login;
+    use telmoni_cli::config::Config;
+
+    login::execute(
+        login::LoginArgs {
+            key: None,
+            endpoint: Some("https://telmoni.com".to_string()),
+            no_browser: true,
+        },
+        transport,
+        store,
+        &Config::default(),
+        None,
+        |_: &str| Ok(()),
+        |_| async {},
+    )
+    .await
+}
+
+// 29. The interactive login end to end, with the browser and the wait between
+//     polls passed in: the browser opens the URL that carries the code, the
+//     grant is polled at its interval and 5 s more after a slow_down, and the
+//     session is saved once /cli/me has answered
+#[tokio::test]
+async fn test_interactive_login() {
+    use telmoni_cli::commands::login;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let opened = Arc::new(Mutex::new(Vec::<String>::new()));
+    let slept = Arc::new(Mutex::new(Vec::<Duration>::new()));
+
+    transport.push_answer(200, DEVICE_START);
+    transport.push_answer(202, r#"{"status":"authorization_pending"}"#);
+    transport.push_answer(202, r#"{"status":"slow_down"}"#);
+    transport.push_answer(200, GRANTED);
+    transport.push_answer(200, ME_IN_ORG_1);
+
+    login::execute(
+        login::LoginArgs {
+            key: None,
+            endpoint: Some("https://telmoni.com".to_string()),
+            no_browser: false,
+        },
+        &transport,
+        &store,
+        &Config::default(),
+        None,
+        |url: &str| {
+            opened.lock().unwrap().push(url.to_string());
+            Ok(())
+        },
+        |dur| {
+            let slept = slept.clone();
+            async move { slept.lock().unwrap().push(dur) }
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        *opened.lock().unwrap(),
+        ["https://telmoni.com/auth/device?code=BCDF-GHJK"]
+    );
+    assert_eq!(
+        *slept.lock().unwrap(),
+        [
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(10)
+        ]
+    );
+
+    let reqs = transport.requests.lock().unwrap();
+    let paths: Vec<&str> = reqs
+        .iter()
+        .map(|r| r.url.trim_start_matches("https://telmoni.com"))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "/cli/auth/device",
+            "/cli/auth/device/poll",
+            "/cli/auth/device/poll",
+            "/cli/auth/device/poll",
+            "/cli/me",
+        ]
+    );
+    assert_eq!(reqs[0].bearer, None);
+    assert_eq!(reqs[0].json, None);
+    assert_eq!(
+        reqs[1].json,
+        Some(serde_json::json!({ "deviceCode": "secret_device_code" }))
+    );
+    assert_eq!(reqs[4].bearer.as_deref(), Some("at_new"));
+    assert_eq!(reqs[4].organization, None);
+
+    let saved = store.load().unwrap().unwrap();
+    assert_eq!(saved.auth_type, AuthType::Device);
+    assert_eq!(saved.endpoint, "https://telmoni.com");
+    assert_eq!(saved.access_token.as_deref(), Some("at_new"));
+    assert_eq!(saved.refresh_token.as_deref(), Some("rt_new"));
+    assert_eq!(saved.session_row_id.as_deref(), Some("0192a3b4-1111"));
+    assert_eq!(saved.active_organization_id.as_deref(), Some("org_1"));
+}
+
+// 30. The browser is a convenience: one that will not open is a note and the
+//     login goes on, and --no-browser opens none. The interval never drops
+//     below a second, whatever the start says.
+#[tokio::test]
+async fn test_interactive_login_without_a_browser() {
+    use telmoni_cli::commands::login;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let slept = Arc::new(Mutex::new(Vec::<Duration>::new()));
+
+    transport.push_answer(
+        200,
+        DEVICE_START.replace(r#""interval": 5"#, r#""interval": 0"#),
+    );
+    transport.push_answer(200, GRANTED);
+    transport.push_answer(200, ME_IN_ORG_1);
+    login::execute(
+        login::LoginArgs {
+            key: None,
+            endpoint: Some("https://telmoni.com".to_string()),
+            no_browser: false,
+        },
+        &transport,
+        &store,
+        &Config::default(),
+        None,
+        |_: &str| Err(std::io::Error::other("no display")),
+        |dur| {
+            let slept = slept.clone();
+            async move { slept.lock().unwrap().push(dur) }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(*slept.lock().unwrap(), [Duration::from_secs(1)]);
+    assert!(store.path.exists());
+
+    transport.push_answer(200, DEVICE_START);
+    transport.push_answer(200, GRANTED);
+    transport.push_answer(200, ME_IN_ORG_1);
+    login::execute(
+        login::LoginArgs {
+            key: None,
+            endpoint: Some("https://telmoni.com".to_string()),
+            no_browser: true,
+        },
+        &transport,
+        &store,
+        &Config::default(),
+        None,
+        |_: &str| -> std::io::Result<()> { panic!("--no-browser opens no browser") },
+        |_| async {},
+    )
+    .await
+    .unwrap();
+}
+
+// 31. A login that does not end in a grant saves nothing: denied in the
+//     console, a 401 that is not about the device code (said as it is), or a
+//     request that got no answer, at the start or mid-poll
+#[tokio::test]
+async fn test_interactive_login_that_fails_saves_nothing() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+
+    transport.push_answer(200, DEVICE_START);
+    transport.push_answer(
+        403,
+        r#"{"type":"/errors/authz/forbidden","title":"forbidden","status":403,"detail":"the sign-in was denied from the console"}"#,
+    );
+    let err = device_login(&transport, &store).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "forbidden: the sign-in was denied from the console"
+    );
+
+    transport.push_answer(200, DEVICE_START);
+    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    let err = device_login(&transport, &store).await.unwrap_err();
+    assert_eq!(err.to_string(), "service credential rejected");
+
+    transport.push_error(anyhow::anyhow!(
+        "request to https://telmoni.com/cli/auth/device failed: Connection refused (os error 111)"
+    ));
+    let err = device_login(&transport, &store).await.unwrap_err();
+    assert!(err.to_string().contains("Connection refused"), "{err}");
+
+    transport.push_answer(200, DEVICE_START);
+    transport.push_answer(202, r#"{"status":"authorization_pending"}"#);
+    transport.push_error(anyhow::anyhow!(
+        "timed out waiting for https://telmoni.com/cli/auth/device/poll"
+    ));
+    let err = device_login(&transport, &store).await.unwrap_err();
+    assert!(
+        err.to_string().starts_with("timed out waiting for"),
+        "{err}"
+    );
+
+    assert!(!store.path.exists());
+}
+
+// 32. The configuration file, at the path main hands down: a missing one is
+//     the defaults, keys round-trip, an unknown key is refused and leaves the
+//     file as it was, and a malformed one is an error main turns into a note
+#[test]
+fn test_configuration_file() {
+    use telmoni_cli::config::{get_config_value, load_config, set_config_value};
+
+    let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("telmoni-config-{}-{}", std::process::id(), n));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("telmoni").join("config.json");
+
+    assert_eq!(load_config(&path).unwrap().endpoint, None);
+    assert_eq!(get_config_value(&path, "endpoint").unwrap(), None);
+
+    set_config_value(&path, "endpoint", "https://config.example").unwrap();
+    set_config_value(&path, "output_format", "json").unwrap();
+    assert_eq!(
+        get_config_value(&path, "endpoint").unwrap().as_deref(),
+        Some("https://config.example")
+    );
+    assert_eq!(
+        load_config(&path).unwrap().output_format.as_deref(),
+        Some("json")
+    );
+
+    let before = std::fs::read_to_string(&path).unwrap();
+    let err = set_config_value(&path, "colour", "blue").unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("unknown configuration key 'colour'"),
+        "{err}"
+    );
+    assert!(get_config_value(&path, "colour").is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+    std::fs::write(&path, "{ not json").unwrap();
+    let err = load_config(&path).unwrap_err();
+    assert!(err.to_string().starts_with("parsing config file"), "{err}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

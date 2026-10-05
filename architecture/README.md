@@ -42,7 +42,7 @@ flowchart LR
 5. **Tests are hermetic.** HTTP, sleeps and the poll loop's clock are injected, and the credentials path is a value. No test touches the network or the person's real files. ([build](build.md#tests))
 6. **stdout is the command's output; everything else goes to stderr.** ([commands](commands.md#output))
 7. **Nothing secret is ever printed:** no token, refresh token, device code or API key. The user code is the only code shown. ([transport](transport.md#what-is-never-printed))
-8. **A 5xx never deletes the credentials file; a 401 ends the session.** One refresh cures an expired token. ([auth](auth.md#when-the-session-has-ended))
+8. **A 5xx never deletes the credentials file, and a 401 ends the session only as its problem type says.** One refresh decides a bearer refused as expired or unknown; a 401 the console answers for its own failure ends nothing. ([auth](auth.md#when-the-session-has-ended))
 9. **The SDKs stay configuration-only until their contract exists.** ([sdk](sdk.md))
 
 ## Map of the code
@@ -57,7 +57,8 @@ src/
   client.rs         the /v1 client (API keys)
   config.rs         the configuration file and the base URL
   transport.rs      the Transport seam, User-Agent, error shapes
-tests/auth_tests.rs the CLI's suite, against a mock transport
+tests/auth_tests.rs the library's suite, against a mock transport
+tests/cli_tests.rs  the built binary, in a home and working directory of its own
 sdk/                rust/, typescript/, go/, python/: configuration-only scaffolds
 xtask/              cargo xtask ci (the gate), cargo xtask dist (packaging)
 install.sh          the installer, checksum-verified

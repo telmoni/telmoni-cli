@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::io::IsTerminal;
+
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -57,22 +59,27 @@ async fn main() {
         EnvFilter::new("telmoni=info,warn")
     };
 
+    // Colour only on a terminal: -v is for CI logs as much as for people.
     let _ = fmt()
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
+        .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr)
         .try_init();
 
-    // ⚠ Never a path under the working directory, as for the config file: a
-    // login there would leave the refresh token or the API key in whatever
-    // checkout or CI workspace the CLI was run in.
+    // ⚠ Never a path under the working directory. The configuration file
+    // names the endpoint `login` signs in against, so a checkout the CLI is
+    // run in could send the sign-in, and the API key after it, to a host of
+    // its choosing; and a login there would leave the refresh token or the
+    // API key in whatever checkout or CI workspace the CLI was run in.
     let Some(config_dir) = dirs::config_dir() else {
         eprintln!("no configuration directory to keep the credentials file in; set HOME");
         std::process::exit(1);
     };
-    let creds_path = config_dir.join("telmoni").join("credentials.json");
-    let store = CredentialsStore::new(creds_path);
+    let telmoni_dir = config_dir.join("telmoni");
+    let store = CredentialsStore::new(telmoni_dir.join("credentials.json"));
+    let config_path = telmoni_dir.join("config.json");
 
     let transport = match ReqwestTransport::new() {
         Ok(t) => t,
@@ -82,7 +89,7 @@ async fn main() {
         }
     };
 
-    let config = match load_config() {
+    let config = match load_config(&config_path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("note: could not load config file: {e}");
@@ -99,7 +106,16 @@ async fn main() {
             if args.key.is_none() {
                 args.key = dotenv_var("TELMONI_API_KEY");
             }
-            login::execute(args, &transport, &store, &config, endpoint_env).await
+            login::execute(
+                args,
+                &transport,
+                &store,
+                &config,
+                endpoint_env,
+                |url| open::that(url),
+                tokio::time::sleep,
+            )
+            .await
         }
         Cmd::Logout(args) => logout::execute(args, &transport, &store, telmoni_org_env).await,
         Cmd::Status(args) | Cmd::Whoami(args) => {
@@ -114,7 +130,7 @@ async fn main() {
             .await
         }
         Cmd::Org(cmd) => org::execute(cmd, &transport, &store).await,
-        Cmd::Config(args) => config_cmd::execute(args),
+        Cmd::Config(args) => config_cmd::execute(args, &config_path),
     };
 
     if let Err(e) = res {

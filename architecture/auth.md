@@ -65,7 +65,8 @@ sequenceDiagram
    | 200 | Has its tokens |
    | 403 | Stops: the sign-in was denied in the console |
    | 400 | Stops: the code expired before it was approved |
-   | 401 | Stops: the device code is no longer valid |
+   | 401, `invalid-token` | Stops: the device code is no longer valid (unknown, or already granted, denied, expired or swept) |
+   | Any other 401 | Stops, with the platform's own words: it is not about the code |
    | 5xx, or a network failure | Stops. The person runs `telmoni login` again. |
 
    The interval never drops below one second.
@@ -107,8 +108,9 @@ Directories get `0700` only when the CLI creates them; an existing directory is 
 ## Refresh
 
 The access token is short-lived. The CLI refreshes:
-- **ahead of time**, before `status` and `org switch`, when the token expires within 60 seconds or its expiry is unknown (`refresh_if_needed`);
-- **after the fact**, once, when `/cli/me` answers a 401 of type `/errors/auth/token-expired`. It refreshes and retries the call once.
+- **ahead of time**, before `status` and `org switch` when the token expires within 60 seconds or its expiry is unknown (`refresh_if_needed`), and before `logout` when it expires within 60 seconds;
+- **after the fact**, once, when `/cli/me` or the revoke answers a 401 typed `token-expired`, or `invalid-token`. It refreshes and retries the call once, and the refresh's own answer decides whether the session lives.
+  - ⚠ **Why `invalid-token` too.** The platform answers `token-expired` only while the expired bearer's row exists. Its retention sweep deletes expired rows (daily, per replica), and the same bearer then reads as unknown. A clock that runs slow here skips the early refresh and meets exactly that, and taking it as the end would delete a session that one refresh saves.
 
 The request is `POST /cli/auth/refresh` with `{ refreshToken, sessionRowId }`. `sessionRowId` is left out when unknown, never sent as null. The door converts the body to the platform's snake case.
 
@@ -116,11 +118,15 @@ The answer replaces the access token, its expiry and the refresh token. ⚠ The 
 
 ## When the session has ended
 
+A 401 is read by its problem type (`device.rs`, `refused_credentials`), not its status alone:
+
 | Answer | The credentials file |
 |---|---|
-| A 401 on `/cli/me`, refresh or revoke (the session ended elsewhere, or the token is refused) | **Deleted**, then "session ended; run `telmoni login`". No retry. |
+| A 401 typed `unauthenticated` on `/cli/me`: the session was revoked, or the account is being deleted | **Deleted**, then "session ended; run `telmoni login`". No retry. |
+| A 401 typed `invalid-token` or `unauthenticated` on the refresh: the refresh token is unknown, spent, past its lifetime, or gone with its session | **Deleted**, as above |
+| A 401 typed `token-expired` or `invalid-token` on `/cli/me` | Kept for one refresh, which decides. A 401 of these three types on the retry is final. |
 | A refresh needed, but no refresh token held | Deleted |
-| `/errors/auth/token-expired` on `/cli/me` | Kept: one refresh, one retry |
+| ⚠ Any other 401, such as `service-credential-rejected`, or one with no problem type | **Kept**, and its message shown. Auth answers `service-credential-rejected` when the console's own hop to it fails, so it says nothing about this session; taken as the end, a botched `SERVICE_SECRET` rotation would sign out every CLI that ran a command while it lasted. |
 | A 5xx, a 400/403/404/429, a network failure, a body that does not decode | **Kept.** ⚠ A 5xx or a dropped connection says nothing about whether the session is still live. |
 | Any error on `/v1`, under an API key | Kept |
 
@@ -132,10 +138,15 @@ Ending a session under Active sessions in the console therefore signs the CLI ou
 
 1. **An API key, or a file that can't be read:** delete the file. There is nothing on the server to end.
 2. **Choose the organization header.** The revoke lane is audited on an organization, and the platform requires the header from anyone who belongs to one. The CLI uses `TELMONI_ORG`, else the stored active organization, else the first stored one. The variable names one by id or slug, and the header carries its id. If it names an organization not in the cache, it stops here, and keeps the file.
-3. **Refresh first**, if the token expires within 60 seconds.
-4. **Revoke.** `POST /cli/sessions/{sessionRowId}/revoke`. A 204, or a 404 (already gone), is success.
+3. **Refresh first**, if the token expires within 60 seconds and a refresh token is held. A refresh refused as over means the session already ended: no revoke, no note. Any other failure leaves the old bearer to try, since it may still be inside the platform's leeway.
+4. **Revoke.** `POST /cli/sessions/{sessionRowId}/revoke`. A 204 is success, and so is a 404 typed `/errors/auth/not-found`, auth's "session not found": already gone.
+   - ⚠ **Only that 404.** The door answers a path no lane matches, a session id that is not a UUID among them, with a 404 of its own, before any hop, and that leaves the session as live as it was.
 5. **On a 400 or 403**, the cached organization may be stale. The CLI asks `/cli/me` without a header and retries with the organization it answers.
-6. **Delete the file, whatever the answer.** If the server did not confirm, a note on stderr says to end the session under Active sessions in the console.
+6. **On a 401 typed `token-expired` or `invalid-token`**, when step 3 did not refresh and a refresh token is held: one refresh, then the revoke again, with step 5's fallback. A clock that runs slow here is what skips step 3 (see [refresh](#refresh)). A refresh refused as over means the session already ended.
+7. **What counts as ended.** A revoke refused as `unauthenticated`, or refused as expired or unknown again after a refresh, had already ended. Anything else is unconfirmed: another 401 such as `service-credential-rejected`, any other status, a network failure, a bearer refused as expired with no refresh token to renew it, a session id never saved.
+8. **Delete the file, whatever the answer.** If the server did not confirm, a note on stderr says to end the session under Active sessions in the console.
+
+`end_session` makes the decision and `execute` prints it, so the tests read every outcome without capturing stderr.
 
 The door has no sign-out lane of its own, so the CLI signs out through the same revoke Active sessions uses. That lane revokes any one of the person's own sessions, so a CLI's bearer could end a browser session too.
 
@@ -154,13 +165,10 @@ These are differences between the CLI's code and the platform's, found by readin
 
 | Here | The platform | Effect |
 |---|---|---|
-| Every 401 deletes the file | A rejected service secret between the console and the server is also a 401, with its own problem type | A botched `SERVICE_SECRET` rotation would sign out every CLI that ran `status` or `org switch` while it lasted |
-| A 401 on revoke reads as "already ended" | An expired bearer is a 401 too, while its session and refresh token live on | If logout could not refresh first, the session is left open with no warning |
-| Only `token-expired` is refreshed | Once the retention sweep deletes the expired bearer's row, the answer becomes `invalid-token` | With a skewed local clock that skips the early refresh, the CLI deletes a session that refreshing would have saved |
-| `slow_down` adds 5 s for good | The interval never grows. The check compares the database's clock with the process's. | Harmless: the CLI just polls more slowly |
-| 426 means "upgrade the CLI" | Nothing produces a 426 yet | None today |
-| A 404 on revoke is "already gone" | The door answers 404 for a session id that is not a UUID, before any hop | A credentials file whose `session_row_id` is malformed signs out locally with no note, and the session stays live. `/me` always answers a UUID, so only a hand-edited file gets there |
+| `slow_down` adds 5 s for good, as RFC 8628 has it | The interval never grows: a poll is held to the interval the start answered (its `identity.md` says so) | Harmless: the CLI just polls more slowly |
 | A slug is matched exactly | The console redirects a slug typed with a capital to the slug | `org switch Acme` is unknown; `acme` is the slug. Deliberate: a slug is lowercase, and loosening the match is a step towards the name, which is not a name here |
+
+The door no longer relays auth refusing its own service secret as a `401` (it answers `503`), and its own `404`, for a path no lane matches, is typed `/errors/not-found`; the CLI reads both by type either way.
 
 ## Where it lives
 
@@ -170,4 +178,4 @@ These are differences between the CLI's code and the platform's, found by readin
 | Credentials file, atomic save | `src/auth/storage.rs` |
 | `login`, `logout` | `src/commands/login.rs`, `src/commands/logout.rs` |
 | `/v1` client | `src/client.rs` |
-| Tests | `tests/auth_tests.rs` |
+| Tests | `tests/auth_tests.rs`, `tests/cli_tests.rs` |

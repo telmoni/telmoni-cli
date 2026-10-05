@@ -1,9 +1,11 @@
 //! `telmoni logout` command implementation.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 
-use crate::auth::device::{fetch_me, refresh_tokens, revoke_session};
+use crate::auth::device::{
+    SessionEnded, bearer_expired, fetch_me, refresh_session, refused_credentials, revoke_session,
+};
 use crate::auth::storage::{AuthType, Credentials, CredentialsStore};
 use crate::transport::{LaneError, Transport};
 
@@ -24,45 +26,80 @@ pub async fn execute(
         return Ok(());
     };
 
-    match creds.auth_type {
-        AuthType::ApiKey => {
-            let _ = store.clear();
-            println!("Signed out");
-            Ok(())
+    // An API key has no session on the server to end.
+    if creds.auth_type == AuthType::Device {
+        validate_env_org(&creds, telmoni_org_env.as_deref())?;
+        if let Err(err) =
+            end_session(transport, store, &mut creds, telmoni_org_env.as_deref()).await
+        {
+            eprintln!(
+                "note: the server did not confirm the sign-out ({err}); \
+                 end the session from Active sessions in the console"
+            );
         }
-        AuthType::Device => {
-            execute_device_logout(transport, store, &mut creds, telmoni_org_env).await
-        }
-    }
-}
-
-async fn execute_device_logout(
-    transport: &impl Transport,
-    store: &CredentialsStore,
-    creds: &mut Credentials,
-    telmoni_org_env: Option<String>,
-) -> Result<()> {
-    validate_env_org(creds, telmoni_org_env.as_deref())?;
-
-    let skip_revoke = refresh_token_if_expiring(transport, creds).await;
-
-    if !skip_revoke
-        && let (Some(token), Some(row_id)) = (&creds.access_token, &creds.session_row_id)
-    {
-        let org_header = resolve_revoke_org_header(creds, telmoni_org_env.as_deref());
-        revoke_with_org_fallback(
-            transport,
-            &creds.endpoint,
-            token,
-            row_id,
-            org_header.as_deref(),
-        )
-        .await;
     }
 
     let _ = store.clear();
     println!("Signed out");
     Ok(())
+}
+
+/// Ends the session on the server: `Ok` once the server confirmed it, or said
+/// it had already ended; the error is why that could not be confirmed. What
+/// it refreshes on the way it saves, as every refresh does: the file goes
+/// afterwards whatever the answer.
+pub async fn end_session(
+    transport: &impl Transport,
+    store: &CredentialsStore,
+    creds: &mut Credentials,
+    env_org: Option<&str>,
+) -> Result<()> {
+    let row_id = creds
+        .session_row_id
+        .clone()
+        .context("no session id was saved at sign-in")?;
+    let org_header = resolve_revoke_org_header(creds, env_org);
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let expiring = creds.expires_at.is_some_and(|exp| now_ts >= exp - 60);
+    let mut refreshed = false;
+    if expiring && creds.refresh_token.is_some() {
+        match refresh_session(transport, store, creds).await {
+            Ok(()) => refreshed = true,
+            Err(err) if err.is::<SessionEnded>() => return Ok(()),
+            // The bearer may still be inside the platform's leeway: the
+            // revoke decides.
+            Err(_) => {}
+        }
+    }
+
+    let mut ended =
+        revoke_with_org_fallback(transport, creds, &row_id, org_header.as_deref()).await;
+
+    // A clock that runs slow here skips the early refresh, and the revoke is
+    // then refused as an expired bearer, or as an unknown one once the
+    // platform has swept it. One refresh decides whether the session lives.
+    if !expiring && creds.refresh_token.is_some() && ended.as_ref().is_err_and(bearer_expired) {
+        match refresh_session(transport, store, creds).await {
+            Ok(()) => {
+                refreshed = true;
+                ended = revoke_with_org_fallback(transport, creds, &row_id, org_header.as_deref())
+                    .await;
+            }
+            Err(err) if err.is::<SessionEnded>() => return Ok(()),
+            Err(err) => return Err(err),
+        }
+    }
+
+    match ended {
+        // Refused as a session that is over, or refused again with a bearer
+        // just renewed: it had already ended. A bearer refused as expired
+        // that could not be renewed proves nothing.
+        Err(err) if refused_credentials(&err).is_some() && (refreshed || !bearer_expired(&err)) => {
+            Ok(())
+        }
+        ended => ended,
+    }
 }
 
 fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
@@ -98,43 +135,17 @@ fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Opti
         })
 }
 
-async fn refresh_token_if_expiring(transport: &impl Transport, creds: &mut Credentials) -> bool {
-    let now_ts = chrono::Utc::now().timestamp();
-    let is_expiring = creds.expires_at.is_some_and(|exp| now_ts >= exp - 60);
-
-    if !is_expiring {
-        return false;
-    }
-
-    let Some(ref rt) = creds.refresh_token else {
-        return false;
-    };
-
-    match refresh_tokens(
-        transport,
-        &creds.endpoint,
-        rt,
-        creds.session_row_id.as_deref(),
-    )
-    .await
-    {
-        Ok(authn) => {
-            creds.apply_refresh(&authn);
-            false
-        }
-        Err(err) => err
-            .downcast_ref::<LaneError>()
-            .is_some_and(|lane_err| lane_err.status == 401),
-    }
-}
-
 async fn revoke_with_org_fallback(
     transport: &impl Transport,
-    endpoint: &str,
-    token: &str,
+    creds: &Credentials,
     row_id: &str,
     initial_org_header: Option<&str>,
-) {
+) -> Result<()> {
+    let token = creds
+        .access_token
+        .as_deref()
+        .context("missing access token")?;
+    let endpoint = &creds.endpoint;
     let mut ended = revoke_session(transport, endpoint, token, row_id, initial_org_header).await;
 
     // The cached organization list can be stale, and the server
@@ -153,16 +164,7 @@ async fn revoke_with_org_fallback(
         )
         .await;
     }
-
-    // A 401 means the session was already ended elsewhere.
-    if lane_status(&ended) != Some(401)
-        && let Err(err) = ended
-    {
-        eprintln!(
-            "note: the server did not confirm the sign-out ({err}); \
-             end the session from Active sessions in the console"
-        );
-    }
+    ended
 }
 
 fn lane_status(res: &Result<()>) -> Option<u16> {

@@ -1,5 +1,6 @@
 //! `telmoni login` command implementation.
 
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
@@ -8,9 +9,9 @@ use clap::Args;
 use crate::auth::device::{fetch_me, poll_once, poll_until_granted, start_device_auth};
 use crate::auth::storage::{Credentials, CredentialsStore, print_active_organization};
 use crate::config::{Config, resolve_endpoint};
-use crate::transport::Transport;
+use crate::transport::{REDACTED, Transport};
 
-/// Arguments for `telmoni login`. No `Debug`: `key` is the API key.
+/// Arguments for `telmoni login`.
 #[derive(Args)]
 pub struct LoginArgs {
     /// Authenticate non-interactively using an API key.
@@ -27,6 +28,22 @@ pub struct LoginArgs {
     /// Do not automatically open the browser.
     #[arg(long)]
     pub no_browser: bool,
+}
+
+/// ⚠ By hand: `key` is the API key.
+impl std::fmt::Debug for LoginArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            key,
+            endpoint,
+            no_browser,
+        } = self;
+        f.debug_struct("LoginArgs")
+            .field("key", &key.as_ref().map(|_| REDACTED))
+            .field("endpoint", endpoint)
+            .field("no_browser", no_browser)
+            .finish()
+    }
 }
 
 /// Validates that an API key starts with `telmoni_`, has a non-empty payload, and contains no whitespace.
@@ -55,21 +72,30 @@ pub fn same_origin(candidate: &str, endpoint: &str) -> bool {
 }
 
 /// Executes the `telmoni login` flow. `endpoint_env` is `TELMONI_ENDPOINT`
-/// as `main` read it.
-pub async fn execute(
+/// as `main` read it. The browser and the wait between polls are passed in,
+/// like the transport, so a test runs the whole flow without either.
+pub async fn execute<B, S, SF>(
     args: LoginArgs,
     transport: &impl Transport,
     store: &CredentialsStore,
     config: &Config,
     endpoint_env: Option<String>,
-) -> Result<()> {
+    open_browser: B,
+    sleep: S,
+) -> Result<()>
+where
+    B: FnOnce(&str) -> std::io::Result<()>,
+    S: FnMut(Duration) -> SF,
+    SF: Future<Output = ()>,
+{
     let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config);
 
     if let Some(key) = args.key {
         return login_with_api_key(&key, endpoint, store);
     }
 
-    login_with_device_flow(args, endpoint, transport, store).await
+    let browser = (!args.no_browser).then_some(open_browser);
+    login_with_device_flow(endpoint, transport, store, browser, sleep).await
 }
 
 fn login_with_api_key(key: &str, endpoint: String, store: &CredentialsStore) -> Result<()> {
@@ -82,18 +108,24 @@ fn login_with_api_key(key: &str, endpoint: String, store: &CredentialsStore) -> 
     Ok(())
 }
 
-async fn login_with_device_flow(
-    args: LoginArgs,
+async fn login_with_device_flow<B, S, SF>(
     endpoint: String,
     transport: &impl Transport,
     store: &CredentialsStore,
-) -> Result<()> {
+    open_browser: Option<B>,
+    sleep: S,
+) -> Result<()>
+where
+    B: FnOnce(&str) -> std::io::Result<()>,
+    S: FnMut(Duration) -> SF,
+    SF: Future<Output = ()>,
+{
     let start = start_device_auth(transport, &endpoint).await?;
 
     println!("First copy your one-time code: {}", start.user_code);
     println!("Then open {} and enter it.", start.verification_uri);
 
-    if !args.no_browser {
+    if let Some(open_browser) = open_browser {
         let browser_url = start
             .verification_uri_complete
             .as_deref()
@@ -103,7 +135,7 @@ async fn login_with_device_flow(
         // one-time code — and the machine's URL handler — to whatever it
         // named. The address is printed above either way.
         if same_origin(browser_url, &endpoint) {
-            if let Err(e) = open::that(browser_url) {
+            if let Err(e) = open_browser(browser_url) {
                 eprintln!("note: could not open browser: {e}");
             }
         } else {
@@ -120,7 +152,7 @@ async fn login_with_device_flow(
         interval,
         expires_in,
         || poll_once(transport, &endpoint, &start.device_code),
-        tokio::time::sleep,
+        sleep,
         Instant::now,
     )
     .await?;

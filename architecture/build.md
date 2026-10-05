@@ -34,19 +34,20 @@ Why it is built this way:
 
 ## Tests
 
-`tests/auth_tests.rs` is the CLI's suite. It holds mock-based tests, with no network and no sleeps.
+Two suites, with no network and no sleeps:
+- **`tests/auth_tests.rs`** drives the library against a mock transport: the device flow and the interactive `login`, refresh and the 401 rules, `status`, `org`, `logout`, the credentials and configuration files, the error parser, and that `Debug` prints no secret.
+- **`tests/cli_tests.rs`** runs the built binary (`CARGO_BIN_EXE_telmoni`), which is what covers `main.rs`: the environment it reads, a debug build's `.env`, where the two files land, and what reaches stdout and stderr. ⚠ Each run gets a home and a working directory of its own under the temp directory and an environment holding nothing but that home, so the person's real files, `.env` and variables never reach it. Its commands are the ones that make no request: `config`, a signed-out `status`, `login --key`, `org` under a key, and `logout` under a key.
 
-- **HTTP is injected** through the `Transport` trait (see [transport](transport.md)). `MockTransport` answers from a queue of scripted responses and records every request. An unexpected request is an error, and "no network" is asserted as zero requests made. The three tests that build the real transport only check that it refuses plain HTTP, which it does before opening a connection.
-- **The poll loop's sleep and clock are injected as closures.** A device-flow poll runs in microseconds, and the tests record the durations it asked to sleep. The wall clock is not injected: refresh decisions read the real time, and tests set expiries relative to it.
-- **The credentials path is a value**, so tests write under `std::env::temp_dir()`, never to the person's real configuration directory.
+How the library suite stays hermetic:
+- **HTTP is injected** through the `Transport` trait (see [transport](transport.md)). `MockTransport` answers from a queue of scripted responses or failures, and records every request. An unexpected request is an error, and "no network" is asserted as zero requests made. The three tests that build the real transport only check that it refuses plain HTTP, which it does before opening a connection.
+- **The poll loop's sleep and clock, and `login`'s browser and sleep, are injected as closures.** A device-flow poll runs in microseconds, and the tests record the durations it asked to sleep and the URL it asked to open. The wall clock is not injected: refresh decisions read the real time, and tests set expiries relative to it.
+- **The credentials and configuration paths are values**, so tests write under `std::env::temp_dir()`, never to the person's real configuration directory.
 - **The environment is passed in as arguments**, never set.
 
 **Not covered by tests:**
-- `main.rs`;
-- the configuration file, whose path resolves to the real directory;
-- the interactive `login`, which opens a browser and sleeps for real;
-- logout under an API key;
-- a transport failure. The mock can inject one, but no test does.
+- the real transport's deadlines and connection failures, which would take a socket and real waiting. The mock stands in for both, and the code that reads them is covered;
+- the real browser opening;
+- a signed-in run of the binary, which would need a platform to answer it.
 
 Each SDK has its own contract tests (see [SDKs](sdk.md#what-the-tests-pin)).
 
@@ -146,7 +147,7 @@ Actions are pinned by major version tag.
 | Concern | File |
 |---|---|
 | The gate and packaging | `xtask/src/main.rs`, `xtask/src/dist.rs`, `.cargo/config.toml` |
-| The CLI's tests | `tests/auth_tests.rs` |
+| The CLI's tests | `tests/auth_tests.rs`, `tests/cli_tests.rs` |
 | Lints, profiles, workspace | `Cargo.toml`, `clippy.toml` |
 | Supply-chain policy | `deny.toml` |
 | Toolchain | `rust-toolchain.toml` |

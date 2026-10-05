@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
+
+use crate::transport::REDACTED;
 
 /// Type of authentication stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,23 +98,37 @@ pub struct Credentials {
     pub updated_at: i64,
 }
 
-/// The tokens and the key never print: a `{:?}` of the credentials — a
-/// failing assertion, a future log line — shows which are held, not what
-/// they are.
+/// ⚠ By hand, not derived: a derived `Debug` would print the tokens and the
+/// API key into any log line or test failure that formats the credentials.
 impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured, so a field added later has to be placed here: shown,
+        // or redacted.
+        let Self {
+            auth_type,
+            endpoint,
+            access_token,
+            refresh_token,
+            expires_at,
+            session_row_id,
+            person,
+            organizations,
+            active_organization_id,
+            api_key,
+            updated_at,
+        } = self;
         f.debug_struct("Credentials")
-            .field("auth_type", &self.auth_type)
-            .field("endpoint", &self.endpoint)
-            .field("access_token", &self.access_token.as_ref().map(|_| "***"))
-            .field("refresh_token", &self.refresh_token.as_ref().map(|_| "***"))
-            .field("expires_at", &self.expires_at)
-            .field("session_row_id", &self.session_row_id)
-            .field("person", &self.person)
-            .field("organizations", &self.organizations)
-            .field("active_organization_id", &self.active_organization_id)
-            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
-            .field("updated_at", &self.updated_at)
+            .field("auth_type", auth_type)
+            .field("endpoint", endpoint)
+            .field("access_token", &access_token.as_ref().map(|_| REDACTED))
+            .field("refresh_token", &refresh_token.as_ref().map(|_| REDACTED))
+            .field("expires_at", expires_at)
+            .field("session_row_id", session_row_id)
+            .field("person", person)
+            .field("organizations", organizations)
+            .field("active_organization_id", active_organization_id)
+            .field("api_key", &api_key.as_ref().map(|_| REDACTED))
+            .field("updated_at", updated_at)
             .finish()
     }
 }
@@ -248,16 +265,36 @@ impl CredentialsStore {
     /// signed in; one that is there but cannot be read says so on stderr
     /// first, since the person did sign in once and has to again.
     pub fn load(&self) -> Result<Option<Credentials>> {
+        let path = self.path.display();
         if !self.path.exists() {
+            debug!(%path, "no credentials file");
             return Ok(None);
         }
-        let readable = std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<Credentials>(&content).ok());
-        let Some(creds) = readable else {
-            eprintln!("note: the saved credentials cannot be read; sign in again");
-            return Ok(None);
+        let content = match std::fs::read_to_string(&self.path) {
+            Ok(content) => content,
+            Err(err) => {
+                debug!(%path, %err, "the credentials file cannot be read");
+                eprintln!("note: the saved credentials cannot be read; sign in again");
+                return Ok(None);
+            }
         };
+        let creds = match serde_json::from_str::<Credentials>(&content) {
+            Ok(creds) => creds,
+            Err(err) => {
+                // ⚠ Where, never the error's own text: serde quotes the value
+                // it choked on, and in this file that can be a token.
+                debug!(
+                    %path,
+                    category = ?err.classify(),
+                    line = err.line(),
+                    column = err.column(),
+                    "the credentials file does not parse"
+                );
+                eprintln!("note: the saved credentials cannot be read; sign in again");
+                return Ok(None);
+            }
+        };
+        debug!(%path, auth_type = ?creds.auth_type, "credentials read");
 
         match creds.auth_type {
             AuthType::Device => {
@@ -338,6 +375,7 @@ impl CredentialsStore {
         if let Ok(dir) = std::fs::File::open(parent) {
             let _ = dir.sync_all();
         }
+        debug!(path = %path.display(), "credentials saved");
         Ok(())
     }
 
@@ -345,6 +383,7 @@ impl CredentialsStore {
     pub fn clear(&self) -> Result<()> {
         if self.path.exists() {
             std::fs::remove_file(&self.path).ok();
+            debug!(path = %self.path.display(), "credentials file deleted");
         }
         Ok(())
     }

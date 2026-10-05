@@ -16,12 +16,12 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 
 `main` (`src/main.rs`) runs in this order:
 
-1. **Parse the command line** with clap. The global `-v` switches the stderr log filter to debug. There are no `tracing` calls in `src/` yet, so it changes nothing today.
-2. **Resolve the credentials path:** `dirs::config_dir()/telmoni/credentials.json`. With no user config directory the CLI says so on stderr and exits 1, whatever the command: it never keeps credentials under the working directory.
+1. **Parse the command line** with clap. The global `-v` switches the stderr log filter to debug: which files were read and written, where the endpoint came from, each request and answer, and what the device flow and the 401 rules decided. Nothing secret is logged (see [transport](transport.md#what-is-never-printed)). Colour only on a terminal, since `-v` is for CI logs as much as for people.
+2. **Resolve the paths:** `dirs::config_dir()/telmoni/`, holding `credentials.json` and `config.json`, each handed down as a value. With no user config directory the CLI says so on stderr and exits 1, whatever the command: it never keeps either file under the working directory.
 3. **Build the HTTP transport** (see [transport](transport.md)).
 4. **Read the configuration file.** A malformed file emits a note on stderr and becomes the default. A missing one is the default without a note.
-5. **Read the environment** (below), and dispatch.
-6. **On error**, print it to stderr and exit 1. Only the outermost context is printed, so a network failure reads "transport send failed for `<url>`", without its cause.
+5. **Read the environment** (below), and dispatch. `login` is also handed the real browser and the real wait between polls, which tests replace.
+6. **On error**, print it to stderr and exit 1. Only the outermost context is printed; a request that got no answer carries its cause in that one line (see [transport](transport.md#the-seam)).
 
 ## The environment at the edge
 
@@ -36,13 +36,13 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 
 **A variable that is set but blank** is treated as unset by `main`. clap does not apply that filter, so an exported but empty `TELMONI_API_KEY` reaches `login` as an empty key and is refused.
 
-**Two reads happen outside `main`:**
-- `dirs` reads the platform's own variables to find the configuration directory;
+**Two reads happen outside `main`'s own code:**
+- `dirs`, which `main` alone calls, reads the platform's own variables (`HOME`, `XDG_CONFIG_HOME`) to find the configuration directory;
 - clap reads the two variables above directly.
 
 ## The configuration file
 
-`dirs::config_dir()/telmoni/config.json`: `~/Library/Application Support/telmoni/` on macOS, `~/.config/telmoni/` on Linux (`src/config.rs`).
+`dirs::config_dir()/telmoni/config.json`: `~/Library/Application Support/telmoni/` on macOS, `~/.config/telmoni/` on Linux (`src/config.rs`). `main` resolves the path and hands it down, as it does the credentials path, so tests read and write one under the temp directory.
 
 | Key | Use |
 |---|---|

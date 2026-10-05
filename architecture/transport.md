@@ -32,7 +32,11 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 - **The host is read from the parsed URL.** An IPv6 address comes in brackets, and `localhost.example.com` is not this machine.
 - So `http://localhost:3000` works, and a plain-HTTP endpoint anywhere else fails at its first request. That includes a local platform reached by another name, from inside a container for one.
 
-**The client follows no redirect, and waits at most 30 seconds for an answer.** No lane answers a 3xx, and following one would resend the bearer to any same-host, same-port target whatever its scheme: `reqwest` strips `Authorization` only when the host or the known default port changes. So a 3xx is answered as the error it is. The timeout covers the whole request. The console's door cuts its own hop to the platform's server at its upstream timeout, but a console that stopped answering mid-request would otherwise have held a poll forever.
+**The client follows no redirect.** No lane answers a 3xx, and following one would resend the bearer to any same-host, same-port target whatever its scheme: `reqwest` strips `Authorization` only when the host or the known default port changes. So a 3xx is answered as the error it is.
+
+**Every request has a deadline.** `REQUEST_TIMEOUT` (30 seconds) bounds a request from connecting to the last byte of its answer, and `CONNECT_TIMEOUT` (10 seconds) bounds connecting within it, so a host that never answers fails in seconds.
+- ⚠ **It is well past the console's own wait on the server** (the door's `UPSTREAM_TIMEOUT_MS`, the `/v1` relay's `READ_TIMEOUT_MS`), so a slow server reaches the CLI as the console's 503 problem rather than as a timeout here. Without a deadline, a stalled connection to the console would wait forever.
+- **A request that got no answer** reads as "timed out waiting for `<url>`", or as "request to `<url>` failed: `<cause>`", with the cause from the bottom of the error chain: a refused connection, a name that does not resolve, a certificate that does not verify.
 
 ## What every request carries
 
@@ -52,9 +56,10 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 | An RFC 9457 problem (`application/problem+json`) | `title: detail`. `retry_after_secs` is read from the body, not the header. |
 | `{ "error": "…" }` (nothing the CLI calls answers this shape today — the `/cli` door and `/v1` answer problem documents even for an unreachable server or database; the parser stays for whatever sits in front of them) | That string |
 | Anything else | `request failed (<status>)`, and the first characters of the body |
-| 426 | "this CLI is too old; upgrade it". Nothing on the platform sends a 426 yet. |
 
-**The error keeps its status and problem type**, so callers can downcast it and act on it. That is how the 401 rules work (see [auth](auth.md#when-the-session-has-ended)). The device flow's start is the one call that flattens its error to text.
+**The error keeps its status and problem type**, so callers can downcast it and act on it. That is how the 401 rules work: they read the type, not the status alone (see [auth](auth.md#when-the-session-has-ended)). The device flow's start is the one call that flattens its error to text.
+
+**A 426 is read like any other problem.** The platform defines one, `/errors/incompatible-client`, whose detail names this CLI's version and the minimum it supports. Nothing sends it yet.
 
 ## The /v1 client
 
@@ -70,7 +75,9 @@ A `/v1` error never touches the credentials file. An API key's validity is the p
 - The access token, the refresh token, the device code and the API key.
 - The user code, the verification URL and the endpoint are shown. They are not secrets.
 
-⚠ **`Debug` is masked by hand** on `Credentials`, `AuthnResult`, `DeviceStart` and `LaneRequest`, as the platform masks its equivalents: a `{:?}` shows which secret is held (`***`), never its value, and a request body as `…`, since the poll and refresh bodies carry the device code and the refresh token. `LoginArgs` has no `Debug` at all: its `key` is the API key. No code formats any of them today; a failing assertion or a future log line would.
+⚠ **`Debug` is written by hand** on every struct that holds a secret: `Credentials`, `AuthnResult`, `DeviceStart`, `LaneRequest`, `LaneAnswer` (a granted poll's body carries the tokens) and `LoginArgs` (the API key). Each prints `<redacted>` in the secret's place, so a log line or a test failure that formats one prints no token. Each destructures its struct, so a field added later does not compile until it is placed: shown, or redacted.
+
+**`-v` logs to stderr** each request's method, URL and organization, and each answer's status and content type: never a bearer or a body. A credentials file that does not parse is logged by where it failed (line, column), never by serde's message, which quotes the value it choked on.
 
 ## Where it lives
 

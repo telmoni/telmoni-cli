@@ -34,6 +34,8 @@ telmoni logout
 
 `telmoni login --key telmoni_…` signs in with an API key, for CI and servers. Every command, flag and variable is documented at [docs.telmoni.com/api/cli](https://docs.telmoni.com/api/cli/).
 
+Add `-v` to any command to log to stderr which files it read and wrote, where its endpoint came from, and each request and answer. It never logs a token or a key.
+
 ## SDKs
 
 `sdk/` holds configuration-only scaffolds for TypeScript, Python, Go and Rust; each grows a client once its contract exists. See [docs.telmoni.com/api/sdks](https://docs.telmoni.com/api/sdks/).
