@@ -1,6 +1,7 @@
 package telmoni
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -12,7 +13,29 @@ const DefaultEndpoint = "https://telmoni.com"
 type Config struct {
 	Endpoint       string `json:"endpoint"`
 	OrganizationID string `json:"organization_id,omitempty"`
-	APIKey         string `json:"api_key,omitempty"`
+	// APIKey is the API key (telmoni_…). It is never marshalled, and String
+	// and GoString redact it: a configuration logged or written out would
+	// otherwise carry the key.
+	APIKey string `json:"-"`
+}
+
+// String formats the configuration for %v and %s, with the API key redacted.
+func (c Config) String() string {
+	return fmt.Sprintf("{Endpoint:%s OrganizationID:%s APIKey:%s}",
+		c.Endpoint, c.OrganizationID, redacted(c.APIKey))
+}
+
+// GoString formats the configuration for %#v, with the API key redacted.
+func (c Config) GoString() string {
+	return fmt.Sprintf("telmoni.Config{Endpoint:%q, OrganizationID:%q, APIKey:%q}",
+		c.Endpoint, c.OrganizationID, redacted(c.APIKey))
+}
+
+func redacted(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return "<redacted>"
 }
 
 // DefaultConfig returns the default SDK configuration.
@@ -64,4 +87,16 @@ func NewFromEnv() *Client {
 // Config returns the active client configuration.
 func (c *Client) Config() Config {
 	return c.config
+}
+
+// String formats the client for %v and %s, with the API key redacted. fmt
+// reaches an unexported field by reflection, past Config's own String, so
+// without this the client would print the key.
+func (c Client) String() string {
+	return "{config:" + c.config.String() + "}"
+}
+
+// GoString formats the client for %#v, with the API key redacted.
+func (c Client) GoString() string {
+	return "telmoni.Client{config:" + c.config.GoString() + "}"
 }

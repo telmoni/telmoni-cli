@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 DEFAULT_ENDPOINT = "https://telmoni.com"
 
@@ -10,7 +10,8 @@ DEFAULT_ENDPOINT = "https://telmoni.com"
 class Config:
     endpoint: str = DEFAULT_ENDPOINT
     organization_id: str | None = None
-    api_key: str | None = None
+    # Out of the repr: a configuration printed or logged would carry the key.
+    api_key: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.endpoint:

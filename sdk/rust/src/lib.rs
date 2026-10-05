@@ -8,14 +8,34 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_ENDPOINT: &str = "https://telmoni.com";
 
 /// Client configuration for connecting to Telmoni.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Telmoni API endpoint URL (default: `https://telmoni.com`).
     pub endpoint: String,
     /// Organization ID (`org_…`).
     pub organization_id: Option<String>,
     /// The API key (`telmoni_…`, `TELMONI_API_KEY`); `/v1` takes no other bearer.
+    /// Never serialized, and redacted in `Debug`: a configuration written out
+    /// or logged would otherwise carry the key.
+    #[serde(skip_serializing)]
     pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Destructured, so a field added later has to be placed here: shown,
+        // or redacted.
+        let Self {
+            endpoint,
+            organization_id,
+            api_key,
+        } = self;
+        f.debug_struct("Config")
+            .field("endpoint", endpoint)
+            .field("organization_id", organization_id)
+            .field("api_key", &api_key.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl Default for Config {

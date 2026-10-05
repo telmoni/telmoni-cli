@@ -12,9 +12,11 @@ export class Telmoni {
     const rawEndpoint = config?.endpoint || DEFAULT_ENDPOINT;
     this.config = {
       endpoint: rawEndpoint.replace(/\/+$/, ''),
-      apiKey: config?.apiKey,
       organizationId: config?.organizationId,
     };
+    // Not enumerable: console.log, util.inspect and JSON.stringify skip it, so
+    // a client or a configuration logged or serialized whole leaves the key out.
+    Object.defineProperty(this.config, 'apiKey', { value: config?.apiKey, enumerable: false });
   }
 
   /**

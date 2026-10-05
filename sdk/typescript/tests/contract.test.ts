@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { Telmoni, DEFAULT_ENDPOINT, type Config } from '../src/index';
 
@@ -18,6 +19,20 @@ describe('Telmoni TypeScript SDK', () => {
     const client = new Telmoni(config);
     expect(client.config.endpoint).toBe('https://custom.endpoint');
     expect(client.config.apiKey).toBe('telmoni_test_key_123');
+  });
+
+  it('never prints or serializes the API key', () => {
+    const client = new Telmoni({ apiKey: 'telmoni_secret_key', organizationId: 'org_1' });
+    for (const printed of [
+      inspect(client),
+      JSON.stringify(client),
+      inspect(client.config),
+      JSON.stringify(client.config),
+    ]) {
+      expect(printed).not.toContain('telmoni_secret_key');
+      expect(printed).toContain('org_1');
+    }
+    expect(client.config.apiKey).toBe('telmoni_secret_key');
   });
 
   it('should initialize from environment', () => {

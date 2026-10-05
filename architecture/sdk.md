@@ -62,22 +62,21 @@ Each SDK has one contract test file:
 | The default endpoint, as the constant and as the literal URL | yes | yes | the constant only | yes |
 | A trailing `/` is stripped | yes | yes | — | yes |
 | Building from the environment gives the default | non-empty only | yes, with `TELMONI_ENDPOINT` cleared first | non-nil only | yes, with `TELMONI_ENDPOINT` cleared first |
+| The credential is never printed, and stays readable | `Debug` of `Config` and `Client` | `util.inspect` and `JSON.stringify` of the client and its `config` | `%v`, `%+v`, `%#v` of `Config` and `Client`, and `json.Marshal` | `repr` |
 
 Not pinned anywhere:
 - the environment variable names and their precedence (no test sets one; the TypeScript and Python tests only clear the endpoint's, so a shell pointed at a local stack does not fail them);
-- the organization field;
-- the credential.
+- Rust's `Serialize` leaving the credential out (the crate has no serializer to test it with, and adding one is a dependency change).
 
 Go's example has no `// Output:` line, so it compiles but never runs. The TypeScript tests import the sources, not the built package, so its dual CommonJS and ESM exports go unexercised.
 
 ## Credentials in configuration
 
-⚠ **Each SDK's configuration can print its credential.**
-- In Rust, `Config` and `Client` derive `Debug`, and `Config` also derives `Serialize`, with the key included.
-- Python's dataclass `repr` includes it.
-- Go's struct carries a JSON tag on it.
-
-AGENTS.md's rule is to never print a token or an API key. The CLI follows it. The SDKs will need a redacting `Debug`/`repr` and no serialized credential before they carry real keys.
+⚠ **No SDK's configuration prints or serializes its credential**, as AGENTS.md has it for the CLI:
+- **Rust:** `Config`'s `Debug` is written by hand and prints `<redacted>`, and `Client`'s, derived, goes through it. `api_key` is `#[serde(skip_serializing)]`: it can be read from a file, never written to one.
+- **Python:** `api_key` is `field(repr=False)`. `dataclasses.asdict` still carries it, as any explicit read does.
+- **Go:** `APIKey` is `json:"-"`, and `Config` and `Client` have `String` and `GoString` that redact it. `Client` needs its own, because `fmt` reaches its unexported `config` field by reflection, past `Config`'s methods. A struct of the caller's that holds a `Config` in an unexported field is printed the same way, which no method here can reach.
+- **TypeScript:** `apiKey` is defined on `config` as not enumerable, so `console.log`, `util.inspect` and `JSON.stringify` leave it out. So does a spread: `{ ...client.config }` has no `apiKey`.
 
 ## Building and testing
 
