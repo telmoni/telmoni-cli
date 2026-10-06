@@ -148,11 +148,17 @@ async fn revoke_with_org_fallback(
     let endpoint = &creds.endpoint;
     let mut ended = revoke_session(transport, endpoint, token, row_id, initial_org_header).await;
 
-    // The cached organization list can be stale, and the server
-    // refuses a revoke that names an organization the person has
-    // left (403) or names none while they belong to one (400).
-    // `/me` says which one to name now.
-    if lane_status(&ended).is_some_and(|s| s == 400 || s == 403)
+    // The cached organization list can be stale. The server refuses a
+    // revoke that names an organization the person has left (403), and one
+    // that names none while they belong to one (400), but takes one naming
+    // none from somebody in no organization. So a refused name is dropped
+    // first, and only a 400 asks `/me` which to name.
+    // ⚠ Not `/me` first: it makes an organization for somebody in none, and
+    // signing out would found one.
+    if initial_org_header.is_some() && lane_status(&ended) == Some(403) {
+        ended = revoke_session(transport, endpoint, token, row_id, None).await;
+    }
+    if lane_status(&ended) == Some(400)
         && let Ok(me) = fetch_me(transport, endpoint, token, None).await
     {
         ended = revoke_session(

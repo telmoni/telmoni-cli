@@ -178,10 +178,11 @@ impl Credentials {
     }
 
     /// Updates stored person, organizations, and session row from `/cli/me`.
-    /// `preserve_active_org` keeps the active organization only while it is
-    /// still one of the person's: one they have left would be sent on every
-    /// request after, so it gives way to the one `/me` acted in, their
-    /// default.
+    /// Without `preserve_active_org` the active organization becomes the one
+    /// `/me` acted in. With it, for a request that named an organization of
+    /// its own, it is kept while it is still one of the person's; one they
+    /// have left would be sent on every request after, so it gives way to
+    /// their default, never to the one the request named.
     pub fn update_from_me(&mut self, me: &crate::auth::device::Me, preserve_active_org: bool) {
         self.person = Some(StoredPerson::from(&me.person));
         self.organizations = me
@@ -193,8 +194,10 @@ impl Credentials {
             .active_organization_id
             .as_deref()
             .is_some_and(|id| self.find_organization(id).is_some());
-        if !preserve_active_org || !still_theirs {
+        if !preserve_active_org {
             self.active_organization_id = me.active_organization_id.clone();
+        } else if !still_theirs {
+            self.active_organization_id = me.default_organization_id.clone();
         }
         if me.session_row_id.is_some() {
             self.session_row_id = me.session_row_id.clone();

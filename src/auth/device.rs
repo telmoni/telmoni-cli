@@ -131,9 +131,9 @@ pub struct Organization {
     pub organization_id: String,
     /// The slug the console's paths name it by (`/{slug}`): derived once, from
     /// the name the organization is born with (a placeholder, `org-` and ten
-    /// random characters, when that name gives none), then moved only by a
-    /// change to its URL on Settings, never by a rename. Only the id names
-    /// the organization.
+    /// random characters, when its holder's first name gives none), then
+    /// moved only by a change to its URL on Settings, never by a rename. Only
+    /// the id names the organization.
     pub slug: String,
     /// Organization name, never empty: a new one is born named after its
     /// holder ("Ada's organization", else "My organization").
@@ -164,9 +164,15 @@ pub struct Me {
     /// Organizations the person belongs to.
     #[serde(default)]
     pub organizations: Vec<Organization>,
-    /// Active organization ID.
+    /// The organization this answer acts in: the one the request named, while
+    /// the person belongs to it, else their default.
     #[serde(default)]
     pub active_organization_id: Option<String>,
+    /// The person's default organization: the one they chose in Account
+    /// Settings, else the oldest they own, else the oldest they belong to.
+    /// `None` exactly when `active_organization_id` is.
+    #[serde(default)]
+    pub default_organization_id: Option<String>,
     /// Session row ID for Active Sessions tracking.
     pub session_row_id: Option<String>,
     /// True only on the answer that provisioned an organization for them: not
@@ -424,9 +430,10 @@ impl std::fmt::Display for SessionEnded {
 impl std::error::Error for SessionEnded {}
 
 /// The problem type of a 401 that speaks about the caller's own credentials.
-/// ⚠ Any other 401 ends nothing: the console failing its own hop to the
-/// server (`/errors/auth/service-credential-rejected`) is a 401 too, and
-/// says nothing about this session.
+/// ⚠ Any other 401 ends nothing: it is not auth judging this session (the
+/// door answers its own hop failing as a 503, and a 401 of another shape
+/// comes from whatever sits in front of the platform), and taken as the end
+/// it would sign out every CLI that met it.
 pub(crate) fn refused_credentials(err: &anyhow::Error) -> Option<&'static str> {
     let lane_err = err
         .downcast_ref::<LaneError>()
@@ -477,16 +484,27 @@ pub(crate) async fn refresh_session(
         debug!("no refresh token held");
         return Err(session_ended(store));
     };
-    let authn = refresh_tokens(
-        transport,
-        &creds.endpoint,
-        &rt,
-        creds.session_row_id.as_deref(),
-    )
-    .await
-    .map_err(|err| ended_or_surfaced(store, err))?;
+    let row_id = creds.session_row_id.as_deref();
+    let mut answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
+    // ⚠ The platform may have spent the token without its answer arriving:
+    // the door gives up on auth after ten seconds and answers a 503 of its
+    // own. A spent token presented again within the platform's grace (thirty
+    // seconds) earns the next pair; presented later, by the next command, it
+    // ends the session. So the refresh is asked for again at once.
+    if answer.as_ref().is_err_and(unanswered) {
+        debug!("the refresh got no answer to read; asking again within the platform's grace");
+        answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
+    }
+    let authn = answer.map_err(|err| ended_or_surfaced(store, err))?;
     creds.apply_refresh(&authn);
     store.save(creds)
+}
+
+/// A request the platform may have acted on without the CLI reading its
+/// answer: a 5xx, or no answer it could read.
+fn unanswered(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<LaneError>()
+        .is_none_or(|lane_err| lane_err.status >= 500)
 }
 
 /// `POST /cli/me` for the stored session, held to the platform's 401 rules: a

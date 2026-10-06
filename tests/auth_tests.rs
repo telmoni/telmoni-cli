@@ -604,7 +604,7 @@ async fn test_refresh_if_needed() {
         access_token: Some("old_at".to_string()),
         refresh_token: Some("old_rt".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() - 10), // expired
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
@@ -695,6 +695,67 @@ async fn test_refresh_if_needed() {
     assert_eq!(transport.requests.lock().unwrap().len(), 3);
 }
 
+// 6b. A refresh that got no answer to read, a 5xx or none at all, is asked for
+//     again at once with the same token: the platform may have spent it, and
+//     takes it again only within a short grace. One it answered is not.
+#[tokio::test]
+async fn test_refresh_asked_again_when_unanswered() {
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let expiring = || {
+        let mut creds = device_creds(&["org_1"], "org_1");
+        creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+        creds
+    };
+    let take = || std::mem::take(&mut *transport.requests.lock().unwrap());
+
+    // a 503, then the pair
+    let mut creds = expiring();
+    store.save(&creds).unwrap();
+    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(200, FRESH_TOKENS);
+    refresh_if_needed(&transport, &store, &mut creds)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.load().unwrap().unwrap().refresh_token.as_deref(),
+        Some("rt2")
+    );
+    let reqs = take();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(
+        reqs[0].json, reqs[1].json,
+        "the same token, presented again"
+    );
+
+    // no answer at all, then the pair
+    let mut creds = expiring();
+    store.save(&creds).unwrap();
+    transport.push_error(anyhow::anyhow!(
+        "timed out waiting for https://telmoni.com/cli/auth/refresh"
+    ));
+    transport.push_answer(200, FRESH_TOKENS);
+    refresh_if_needed(&transport, &store, &mut creds)
+        .await
+        .unwrap();
+    assert_eq!(creds.access_token.as_deref(), Some("fresh"));
+    assert_eq!(take().len(), 2);
+
+    // a refusal is an answer, and is not asked for again
+    let mut creds = expiring();
+    store.save(&creds).unwrap();
+    transport.push_answer(
+        429,
+        r#"{"type":"/errors/tenant/rate-limited","title":"rate limited","status":429,"detail":"retry after 3s","retry_after_secs":3}"#,
+    );
+    let err = refresh_if_needed(&transport, &store, &mut creds)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "rate limited: retry after 3s");
+    assert!(store.path.exists());
+    assert_eq!(take().len(), 1);
+}
+
 // 7. organization label: its name, as the console shows it, whether its owner
 //    renamed it or it still has the one it was born with — never the owner's
 //    address, which /cli/me carries beside it
@@ -752,7 +813,7 @@ async fn test_org_switch_logic() {
         access_token: Some("token_123".to_string()),
         refresh_token: Some("rt_123".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -818,7 +879,7 @@ async fn test_org_switch_logic() {
                 }
             ],
             "activeOrganizationId": "org_2",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -857,7 +918,8 @@ async fn test_org_switch_logic() {
                 }
             ],
             "activeOrganizationId": "org_1",
-            "sessionRowId": "0192a3b4-1111"
+            "defaultOrganizationId": "org_1",
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -873,8 +935,8 @@ async fn test_org_switch_logic() {
 
     assert_eq!(mismatch_err.to_string(), "you are no longer in org_2");
     // The answer's list is kept, so `org list` stops showing the organization
-    // the person left; and since that was the active one, it gives way to the
-    // one `/me` acted in, their default.
+    // the person left; and since that was the active one, it gives way to
+    // their default.
     let kept = store.load().unwrap().unwrap();
     assert_eq!(kept.organizations.len(), 1, "the fresh list is kept");
     assert_eq!(kept.organizations[0].organization_id, "org_1");
@@ -894,7 +956,7 @@ async fn test_logout_outcomes() {
         access_token: Some("at_1".to_string()),
         refresh_token: Some("rt_1".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() - 10), // expired, needs refresh
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
@@ -935,7 +997,7 @@ async fn test_logout_outcomes() {
         access_token: Some("at_valid".to_string()),
         refresh_token: Some("rt_valid".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600), // valid, no refresh
-        session_row_id: Some("0192a3b4-2222".to_string()),
+        session_row_id: Some("0192a3b4-2222-7000-8000-000000000002".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
@@ -1123,7 +1185,7 @@ async fn test_telmoni_org_env_validation() {
         access_token: Some("token_valid".to_string()),
         refresh_token: Some("rt_valid".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1194,7 +1256,7 @@ async fn test_status_updates_cached_credentials() {
         access_token: Some("token_original".to_string()),
         refresh_token: Some("rt_original".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1236,7 +1298,7 @@ async fn test_status_updates_cached_credentials() {
                 }
             ],
             "activeOrganizationId": "org_2",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -1284,7 +1346,7 @@ async fn test_status_labels_an_organization_as_born() {
         access_token: Some("token_original".to_string()),
         refresh_token: Some("rt_original".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1300,7 +1362,7 @@ async fn test_status_labels_an_organization_as_born() {
     transport.push_answer(
         200,
         r#"{
-            "person": { "userId": "usr_1", "email": "alice@example.com" },
+            "person": { "userId": "usr_1", "email": "alice@example.com", "displayName": "Alice Smith" },
             "organizations": [
                 {
                     "organizationId": "org_1",
@@ -1311,7 +1373,7 @@ async fn test_status_labels_an_organization_as_born() {
                 }
             ],
             "activeOrganizationId": "org_1",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -1350,7 +1412,7 @@ async fn test_status_in_no_organization() {
         access_token: Some("token_original".to_string()),
         refresh_token: Some("rt_original".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1369,7 +1431,7 @@ async fn test_status_in_no_organization() {
             "person": { "userId": "usr_1", "email": "alice@example.com" },
             "organizations": [],
             "activeOrganizationId": null,
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -1405,7 +1467,7 @@ async fn test_status_retries_on_token_expired() {
         access_token: Some("stale_token".to_string()),
         refresh_token: Some("valid_refresh".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1457,7 +1519,7 @@ async fn test_status_retries_on_token_expired() {
                 }
             ],
             "activeOrganizationId": "org_1",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -1491,7 +1553,8 @@ async fn test_organization_wire_shape() {
             "userId": "usr_org_1",
             "email": "user@org.test",
             "displayName": null,
-            "analyticsOptIn": false
+            "analyticsOptIn": false,
+            "emailVerified": true
         },
         "organizations": [
             {
@@ -1506,10 +1569,18 @@ async fn test_organization_wire_shape() {
         ],
         "deletedOrganizations": [],
         "activeOrganizationId": "org_alpha",
+        "defaultOrganizationId": "org_alpha",
         "memberships": [],
         "incomingInvites": [],
         "projectOffers": [],
-        "flags": [],
+        "flags": {
+            "api_tokens": true,
+            "beta_access": true,
+            "connectors": true,
+            "members": true,
+            "public_api": true,
+            "signup": true
+        },
         "firstLogin": false,
         "sessionRowId": "0192a3b4-0000-7000-8000-000000000001"
     }"#;
@@ -1521,6 +1592,7 @@ async fn test_organization_wire_shape() {
     assert_eq!(me.organizations[0].slug, "org-alpha");
     assert_eq!(me.organizations[0].label(), "Org Alpha");
     assert_eq!(me.active_organization_id.as_deref(), Some("org_alpha"));
+    assert_eq!(me.default_organization_id.as_deref(), Some("org_alpha"));
 
     // B. fetch_v1_organization reads /v1/organization
     let transport = MockTransport::new();
@@ -1561,7 +1633,7 @@ fn device_creds(orgs: &[&str], active: &str) -> Credentials {
         access_token: Some("at".to_string()),
         refresh_token: Some("rt".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
@@ -1594,9 +1666,13 @@ const INVALID_TOKEN: &str =
 const UNAUTHENTICATED: &str =
     r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#;
 
-/// What auth answers when the console's own service secret is refused: a 401
-/// that says nothing about the person's session.
-const SERVICE_CREDENTIAL_REJECTED: &str = r#"{"type":"/errors/auth/service-credential-rejected","title":"service credential rejected","status":401}"#;
+/// What the door answers when auth refuses the console's own service secret:
+/// the platform failing on its own side, which says nothing about the session.
+const OWN_SIDE_FAILED: &str = r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the platform failed on its own side; try again shortly"}"#;
+
+/// A 401 that is not auth's, with no problem type: what something in front of
+/// the platform might answer.
+const FOREIGN_401: &str = r#"{"error":"unauthorized"}"#;
 
 /// A refresh as the platform grants one.
 const FRESH_TOKENS: &str =
@@ -1607,7 +1683,7 @@ const ME_IN_ORG_1: &str = r#"{
     "person": { "userId": "usr_1", "email": "alice@example.com" },
     "organizations": [ { "organizationId": "org_1", "slug": "org-1", "name": "Org 1", "role": "member" } ],
     "activeOrganizationId": "org_1",
-    "sessionRowId": "0192a3b4-1111"
+    "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
 }"#;
 
 // 16. A server failure while curing an expired token never deletes credentials
@@ -1621,11 +1697,11 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
 
     transport.push_answer(401, TOKEN_EXPIRED);
-    // The door's own answer when the server does not: a problem document.
-    transport.push_answer(
-        503,
-        r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the server did not answer; try again shortly"}"#,
-    );
+    // The door's own answer when the server does not: a problem document. The
+    // refresh is asked for twice, since the first may have spent the token.
+    let unavailable = r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the server did not answer; try again shortly"}"#;
+    transport.push_answer(503, unavailable);
+    transport.push_answer(503, unavailable);
 
     let err = status::execute(
         status::StatusArgs { json: false },
@@ -1643,6 +1719,7 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
         "upstream unavailable: the server did not answer; try again shortly"
     );
     assert!(store.path.exists(), "a 503 must never delete credentials");
+    assert_eq!(transport.requests.lock().unwrap().len(), 3);
 }
 
 // 17. org switch obeys the session's 401 rules: ended deletes, expired is cured
@@ -1687,7 +1764,7 @@ async fn test_org_switch_session_401s() {
                 { "organizationId": "org_2", "slug": "two", "name": "Two", "role": "member" }
             ],
             "activeOrganizationId": "org_2",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
     org::execute(
@@ -1723,7 +1800,7 @@ async fn test_status_telmoni_org_left_since_cached() {
             "person": { "userId": "usr_1", "email": "alice@example.com" },
             "organizations": [ { "organizationId": "org_1", "slug": "one", "name": "One", "role": "owner" } ],
             "activeOrganizationId": "org_1",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -1743,18 +1820,89 @@ async fn test_status_telmoni_org_left_since_cached() {
     assert_eq!(updated.organizations.len(), 1, "the fresh list is kept");
 }
 
-// 19. logout names the organization `/me` answers when the cached one is refused
+// 18b. An active organization the person has left gives way to their default,
+//      never to the one a command named: `TELMONI_ORG` acts for one command,
+//      and a switch that is refused moves nothing to its target
+#[tokio::test]
+async fn test_active_organization_left_gives_way_to_the_default() {
+    use telmoni_cli::commands::status;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    // As cached: org_1 at /org-1, org_2 at /org-2, org_3 at /org-3, org_3
+    // active. Since then the person left org_3 and joined org_4, which they
+    // chose as their default, and org_2 took the slug org_1's URL change left.
+    let stale = device_creds(&["org_1", "org_2", "org_3"], "org_3");
+    let me_acting_in = |active: &str| {
+        format!(
+            r#"{{
+                "person": {{ "userId": "usr_1", "email": "alice@example.com" }},
+                "organizations": [
+                    {{ "organizationId": "org_1", "slug": "one-labs", "name": "One Labs", "role": "member" }},
+                    {{ "organizationId": "org_2", "slug": "org-1", "name": "Org 1", "role": "member" }},
+                    {{ "organizationId": "org_4", "slug": "org-4", "name": "Org 4", "role": "member" }}
+                ],
+                "activeOrganizationId": "{active}",
+                "defaultOrganizationId": "org_4",
+                "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
+            }}"#
+        )
+    };
+    let cached = || store.load().unwrap().unwrap();
+
+    // status under TELMONI_ORG reports on org_2, and leaves it inactive
+    store.save(&stale).unwrap();
+    transport.push_answer(200, me_acting_in("org_2"));
+    status::execute(
+        status::StatusArgs { json: false },
+        &transport,
+        &store,
+        &Config::default(),
+        Some("org_2".to_string()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_4"));
+
+    // a switch refused because the slug moved leaves org_1 inactive
+    store.save(&stale).unwrap();
+    transport.push_answer(200, me_acting_in("org_1"));
+    let err = org::execute(
+        org::OrgCommand::Switch {
+            organization: "org-1".to_string(),
+        },
+        &transport,
+        &store,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "org-1 now names another organization; run telmoni org list"
+    );
+    assert_eq!(cached().active_organization_id.as_deref(), Some("org_4"));
+}
+
+// 19. logout, when the cached organization is refused: the revoke goes again
+//     naming none, which the platform takes from somebody in no organization,
+//     and only when they are in one does `/me` say which to name. Asked first,
+//     `/me` would make an organization for somebody in none.
 #[tokio::test]
 async fn test_logout_retries_revoke_with_current_organization() {
     let store = temp_store();
     let transport = MockTransport::new();
+    let forbidden = r#"{"type":"/errors/authz/forbidden","title":"forbidden","status":403}"#;
+
+    // 19a. in another organization since
     store
         .save(&device_creds(&["org_gone"], "org_gone"))
         .unwrap();
-
+    transport.push_answer(403, forbidden);
     transport.push_answer(
-        403,
-        r#"{"type":"/errors/authz/forbidden","title":"forbidden","status":403}"#,
+        400,
+        r#"{"type":"/errors/auth/bad-request","title":"bad request","status":400,"detail":"missing x-organization-id header: name the organization this is recorded on"}"#,
     );
     transport.push_answer(
         200,
@@ -1762,7 +1910,8 @@ async fn test_logout_retries_revoke_with_current_organization() {
             "person": { "userId": "usr_1", "email": "alice@example.com" },
             "organizations": [ { "organizationId": "org_now", "slug": "now", "name": "Now", "role": "member" } ],
             "activeOrganizationId": "org_now",
-            "sessionRowId": "0192a3b4-1111"
+            "defaultOrganizationId": "org_now",
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
     transport.push_answer(204, "");
@@ -1771,12 +1920,31 @@ async fn test_logout_retries_revoke_with_current_organization() {
         .await
         .unwrap();
 
-    let reqs = transport.requests.lock().unwrap();
-    assert_eq!(reqs.len(), 3);
+    let reqs = std::mem::take(&mut *transport.requests.lock().unwrap());
+    assert_eq!(reqs.len(), 4);
     assert_eq!(reqs[0].organization.as_deref(), Some("org_gone"));
-    assert_eq!(reqs[1].url, "https://telmoni.com/cli/me");
     assert_eq!(reqs[1].organization, None);
-    assert_eq!(reqs[2].organization.as_deref(), Some("org_now"));
+    assert_eq!(reqs[2].url, "https://telmoni.com/cli/me");
+    assert_eq!(reqs[2].organization, None);
+    assert_eq!(reqs[3].organization.as_deref(), Some("org_now"));
+    assert!(!store.path.exists());
+
+    // 19b. in no organization since: the revoke naming none ends it, and
+    //      `/me` is never asked
+    store
+        .save(&device_creds(&["org_gone"], "org_gone"))
+        .unwrap();
+    transport.push_answer(403, forbidden);
+    transport.push_answer(204, "");
+
+    logout::execute(logout::LogoutArgs {}, &transport, &store, None)
+        .await
+        .unwrap();
+
+    let reqs = transport.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs.iter().all(|r| r.url.ends_with("/revoke")));
+    assert_eq!(reqs[1].organization, None);
     assert!(!store.path.exists());
 }
 
@@ -1929,7 +2097,7 @@ async fn test_org_switch_takes_no_label() {
         access_token: Some("token_1".to_string()),
         refresh_token: Some("rt_1".to_string()),
         expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111".to_string()),
+        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
         person: Some(StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
@@ -2043,7 +2211,7 @@ async fn test_organization_named_by_slug() {
                     {{ "organizationId": "org_2", "slug": "org-2", "name": "Two", "role": "member" }}
                 ],
                 "activeOrganizationId": "{active}",
-                "sessionRowId": "0192a3b4-1111"
+                "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
             }}"#
         )
     };
@@ -2152,7 +2320,7 @@ async fn test_slug_moved_since_cached() {
                     {{ "organizationId": "org_3", "slug": "org-3", "name": "Three", "role": "member" }}
                 ],
                 "activeOrganizationId": "{active}",
-                "sessionRowId": "0192a3b4-1111"
+                "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
             }}"#
         )
     };
@@ -2226,7 +2394,7 @@ async fn test_slug_moved_since_cached() {
                 { "organizationId": "org_3", "slug": "three-labs", "name": "Three Labs", "role": "member" }
             ],
             "activeOrganizationId": "org_3",
-            "sessionRowId": "0192a3b4-1111"
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
     let gone = switch_to("org-3").await.unwrap_err();
@@ -2315,10 +2483,11 @@ fn test_debug_never_prints_a_secret() {
     assert!(printed[4].contains("BCDF-GHJK"), "the user code is shown");
 }
 
-// 25. A 401 on /cli/me is read by its type. One the console answers for its
-//     own hop to the server says nothing of the session, which is kept; one
-//     for an unknown bearer, which an expired one is once swept, gets the
-//     refresh that decides; one for a session that is over ends it at once.
+// 25. A 401 on /cli/me is read by its type. The platform failing on its own
+//     side, which the door answers as a 503, says nothing of the session, and
+//     nor does a 401 that is not auth's: it is kept. One for an unknown
+//     bearer, which an expired one is once swept, gets the refresh that
+//     decides; one for a session that is over ends it at once.
 #[tokio::test]
 async fn test_status_reads_a_401_by_its_type() {
     use telmoni_cli::commands::status;
@@ -2338,22 +2507,34 @@ async fn test_status_reads_a_401_by_its_type() {
         )
     };
 
-    // 25a. service-credential-rejected on /cli/me: kept, and said as auth says it
+    // 25a. the platform failing on its own side, on /cli/me: kept, and said as
+    //      the door says it
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
-    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    transport.push_answer(503, OWN_SIDE_FAILED);
     let err = status().await.unwrap_err();
-    assert_eq!(err.to_string(), "service credential rejected");
+    assert_eq!(
+        err.to_string(),
+        "upstream unavailable: the platform failed on its own side; try again shortly"
+    );
     assert!(store.path.exists());
 
-    // 25b. and on the refresh an expiring bearer asks for first
+    // 25b. a 401 that is not auth's: kept, with no refresh
+    transport.push_answer(401, FOREIGN_401);
+    let err = status().await.unwrap_err();
+    assert_eq!(err.to_string(), "unauthorized");
+    assert!(store.path.exists());
+
+    // 25c. and on the refresh an expiring bearer asks for first, which is
+    //      asked for twice
     let mut expiring = device_creds(&["org_1"], "org_1");
     expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
     store.save(&expiring).unwrap();
-    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, OWN_SIDE_FAILED);
     status().await.unwrap_err();
     assert!(store.path.exists());
 
-    // 25c. invalid-token on /cli/me for a session that lives: one refresh, one retry
+    // 25d. invalid-token on /cli/me for a session that lives: one refresh, one retry
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(401, INVALID_TOKEN);
     transport.push_answer(200, FRESH_TOKENS);
@@ -2364,14 +2545,14 @@ async fn test_status_reads_a_401_by_its_type() {
         Some("fresh")
     );
 
-    // 25d. invalid-token on /cli/me, and the refresh refused too: it has ended
+    // 25e. invalid-token on /cli/me, and the refresh refused too: it has ended
     transport.push_answer(401, INVALID_TOKEN);
     transport.push_answer(401, INVALID_TOKEN);
     let err = status().await.unwrap_err();
     assert_eq!(err.to_string(), "session ended; run telmoni login");
     assert!(!store.path.exists());
 
-    // 25e. unauthenticated on /cli/me: ended, with no refresh
+    // 25f. unauthenticated on /cli/me: ended, with no refresh
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(401, UNAUTHENTICATED);
     let err = status().await.unwrap_err();
@@ -2387,6 +2568,8 @@ async fn test_status_reads_a_401_by_its_type() {
         paths,
         [
             "/cli/me",
+            "/cli/me",
+            "/cli/auth/refresh",
             "/cli/auth/refresh",
             "/cli/me",
             "/cli/auth/refresh",
@@ -2396,16 +2579,17 @@ async fn test_status_reads_a_401_by_its_type() {
             "/cli/me",
         ]
     );
-    assert_eq!(reqs[4].bearer.as_deref(), Some("fresh"));
+    assert_eq!(reqs[6].bearer.as_deref(), Some("fresh"));
 }
 
 // 26. Signing out under the same rules. A revoke refused as an expired bearer
 //     (a clock that runs slow here skipped the early refresh) is refreshed and
 //     sent again; one refused as unknown, with the refresh refused too, had
-//     already ended, as had one refused as a session that is over. One the
-//     platform refused on its own account, a 404 that is not auth's "session
-//     not found", an expired bearer with nothing to renew it, and no answer at
-//     all are not confirmed; logout says so and deletes the file regardless.
+//     already ended, as had one refused as a session that is over. The
+//     platform failing on its own side, a 401 that is not auth's, a 404 that
+//     is not auth's "session not found", an expired bearer with nothing to
+//     renew it, and no answer at all are not confirmed; logout says so and
+//     deletes the file regardless.
 #[tokio::test]
 async fn test_end_session_reads_a_401_by_its_type() {
     use telmoni_cli::commands::logout::end_session;
@@ -2429,7 +2613,7 @@ async fn test_end_session_reads_a_401_by_its_type() {
     assert!(reqs[1].url.ends_with("/cli/auth/refresh"));
     assert_eq!(
         reqs[2].url,
-        "https://telmoni.com/cli/sessions/0192a3b4-1111/revoke"
+        "https://telmoni.com/cli/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
     );
     assert_eq!(reqs[2].bearer.as_deref(), Some("fresh"));
     assert_eq!(reqs[2].organization.as_deref(), Some("org_1"));
@@ -2451,12 +2635,22 @@ async fn test_end_session_reads_a_401_by_its_type() {
         .unwrap();
     assert_eq!(take().len(), 1);
 
-    // 26d. refused on the platform's own account: not confirmed, and no refresh
-    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    // 26d. the platform failing on its own side, and a 401 that is not auth's:
+    //      not confirmed, and no refresh
+    transport.push_answer(503, OWN_SIDE_FAILED);
     let err = end_session(&transport, &store, &mut creds, None)
         .await
         .unwrap_err();
-    assert_eq!(err.to_string(), "service credential rejected");
+    assert_eq!(
+        err.to_string(),
+        "upstream unavailable: the platform failed on its own side; try again shortly"
+    );
+    assert_eq!(take().len(), 1);
+    transport.push_answer(401, FOREIGN_401);
+    let err = end_session(&transport, &store, &mut creds, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "unauthorized");
     assert_eq!(take().len(), 1);
 
     // 26e. the door's own 404, for a path no lane matches: not confirmed
@@ -2481,7 +2675,7 @@ async fn test_end_session_reads_a_401_by_its_type() {
 
     // 26g. no answer at all
     transport.push_error(anyhow::anyhow!(
-        "timed out waiting for https://telmoni.com/cli/sessions/0192a3b4-1111/revoke"
+        "timed out waiting for https://telmoni.com/cli/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
     ));
     let err = end_session(&transport, &store, &mut creds, None)
         .await
@@ -2491,7 +2685,7 @@ async fn test_end_session_reads_a_401_by_its_type() {
 
     // 26h. logout deletes the file whatever the answer
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
-    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    transport.push_answer(503, OWN_SIDE_FAILED);
     logout::execute(logout::LogoutArgs {}, &transport, &store, None)
         .await
         .unwrap();
@@ -2552,10 +2746,11 @@ async fn test_network_failures_keep_credentials() {
     );
     assert!(store.path.exists());
 
-    // 28b. the refresh an expiring bearer asks for
+    // 28b. the refresh an expiring bearer asks for, which is asked for twice
     let mut expiring = device_creds(&["org_1"], "org_1");
     expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
     store.save(&expiring).unwrap();
+    transport.push_error(no_answer());
     transport.push_error(no_answer());
     refresh_if_needed(&transport, &store, &mut expiring)
         .await
@@ -2568,6 +2763,7 @@ async fn test_network_failures_keep_credentials() {
     // 28c. the refresh that would cure an expired bearer
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(401, TOKEN_EXPIRED);
+    transport.push_error(no_answer());
     transport.push_error(no_answer());
     status().await.unwrap_err();
     assert!(store.path.exists());
@@ -2706,7 +2902,10 @@ async fn test_interactive_login() {
     assert_eq!(saved.endpoint, "https://telmoni.com");
     assert_eq!(saved.access_token.as_deref(), Some("at_new"));
     assert_eq!(saved.refresh_token.as_deref(), Some("rt_new"));
-    assert_eq!(saved.session_row_id.as_deref(), Some("0192a3b4-1111"));
+    assert_eq!(
+        saved.session_row_id.as_deref(),
+        Some("0192a3b4-1111-7000-8000-000000000001")
+    );
     assert_eq!(saved.active_organization_id.as_deref(), Some("org_1"));
 }
 
@@ -2789,9 +2988,9 @@ async fn test_interactive_login_that_fails_saves_nothing() {
     );
 
     transport.push_answer(200, DEVICE_START);
-    transport.push_answer(401, SERVICE_CREDENTIAL_REJECTED);
+    transport.push_answer(401, FOREIGN_401);
     let err = device_login(&transport, &store).await.unwrap_err();
-    assert_eq!(err.to_string(), "service credential rejected");
+    assert_eq!(err.to_string(), "unauthorized");
 
     transport.push_error(anyhow::anyhow!(
         "request to https://telmoni.com/cli/auth/device failed: Connection refused (os error 111)"

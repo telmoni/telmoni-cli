@@ -10,6 +10,7 @@ The platform's code is the contract (AGENTS.md):
 - the `/cli` door, `web/app/cli/[...path]/route.ts`;
 - `/me`, `crates/auth/src/handler/me.rs`;
 - the device grant, `crates/auth/src/issuer.rs` and `crates/auth/src/handler/session.rs`;
+- the revoke, `crates/auth/src/handler/sessions.rs`;
 - `/v1`, `crates/auth/src/handler/v1.rs`.
 
 The platform's own side is in `telmoni/telmoni`'s `architecture/identity.md`. A disagreement is reported there, not worked around here.
@@ -116,6 +117,8 @@ The request is `POST /cli/auth/refresh` with `{ refreshToken, sessionRowId }`. `
 
 The answer replaces the access token, its expiry and the refresh token. ⚠ The platform rotates the refresh token on every use. A spent one presented again after a short grace ends the whole session, so the new refresh token must reach the file, and an answer that carries none leaves none stored — the next refresh then signs the CLI out (the table below). The CLI saves it, and a failed save is an error.
 
+⚠ **A refresh that got no answer to read is asked for again at once**, with the same token: a 5xx, a dropped connection, a timeout. The platform may have spent the token before the answer was lost; the door gives up on auth after 10 s and answers a `503` of its own. Within the platform's grace (`REUSE_GRACE_SECS`, 30 s) the spent token earns the next pair; presented later, by the next command, it would end the session. One retry, never more, and an answer that refuses, such as a `429` or a `401`, is not asked again.
+
 ## When the session has ended
 
 A 401 is read by its problem type (`device.rs`, `refused_credentials`), not its status alone:
@@ -126,7 +129,7 @@ A 401 is read by its problem type (`device.rs`, `refused_credentials`), not its 
 | A 401 typed `invalid-token` or `unauthenticated` on the refresh: the refresh token is unknown, spent, past its lifetime, or gone with its session | **Deleted**, as above |
 | A 401 typed `token-expired` or `invalid-token` on `/cli/me` | Kept for one refresh, which decides. A 401 of these three types on the retry is final. |
 | A refresh needed, but no refresh token held | Deleted |
-| ⚠ Any other 401, such as `service-credential-rejected`, or one with no problem type | **Kept**, and its message shown. Auth answers `service-credential-rejected` when the console's own hop to it fails, so it says nothing about this session; taken as the end, a botched `SERVICE_SECRET` rotation would sign out every CLI that ran a command while it lasted. |
+| ⚠ Any other 401, of another type or none | **Kept**, and its message shown. It is not auth judging this session: the door answers its own hop failing as a `503`, auth refusing the console's service secret (a botched `SERVICE_SECRET` rotation) included, and a 401 of another shape comes from whatever sits in front of the platform. Taken as the end, one would sign out every CLI that met it. |
 | A 5xx, a 400/403/404/429, a network failure, a body that does not decode | **Kept.** ⚠ A 5xx or a dropped connection says nothing about whether the session is still live. |
 | Any error on `/v1`, under an API key | Kept |
 
@@ -141,9 +144,10 @@ Ending a session under Active sessions in the console therefore signs the CLI ou
 3. **Refresh first**, if the token expires within 60 seconds and a refresh token is held. A refresh refused as over means the session already ended: no revoke, no note. Any other failure leaves the old bearer to try, since it may still be inside the platform's leeway.
 4. **Revoke.** `POST /cli/sessions/{sessionRowId}/revoke`. A 204 is success, and so is a 404 typed `/errors/auth/not-found`, auth's "session not found": already gone.
    - ⚠ **Only that 404.** The door answers a path no lane matches, a session id that is not a UUID among them, with a 404 of its own, before any hop, and that leaves the session as live as it was.
-5. **On a 400 or 403**, the cached organization may be stale. The CLI asks `/cli/me` without a header and retries with the organization it answers.
+5. **On a 403**, the cached organization is one the person has left: the CLI sends the revoke again naming none, which the platform takes from somebody in no organization. **On a 400**, from either attempt, they belong to one the header did not name: the CLI asks `/cli/me` without a header and sends the revoke naming the organization it answers.
+   - ⚠ **Never `/me` first.** It makes an organization for somebody in none, so asked before the revoke naming none, signing out would found one.
 6. **On a 401 typed `token-expired` or `invalid-token`**, when step 3 did not refresh and a refresh token is held: one refresh, then the revoke again, with step 5's fallback. A clock that runs slow here is what skips step 3 (see [refresh](#refresh)). A refresh refused as over means the session already ended.
-7. **What counts as ended.** A revoke refused as `unauthenticated`, or refused as expired or unknown again after a refresh, had already ended. Anything else is unconfirmed: another 401 such as `service-credential-rejected`, any other status, a network failure, a bearer refused as expired with no refresh token to renew it, a session id never saved.
+7. **What counts as ended.** A revoke refused as `unauthenticated`, or refused as expired or unknown again after a refresh, had already ended. Anything else is unconfirmed: a 401 of another type, any other status (the door's `503` among them), a network failure, a bearer refused as expired with no refresh token to renew it, a session id never saved.
 8. **Delete the file, whatever the answer.** If the server did not confirm, a note on stderr says to end the session under Active sessions in the console.
 
 `end_session` makes the decision and `execute` prints it, so the tests read every outcome without capturing stderr.

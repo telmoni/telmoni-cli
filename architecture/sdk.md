@@ -38,7 +38,7 @@ Each SDK defaults to `https://telmoni.com`, the same base URL as the CLI's `DEFA
 
 ⚠ **An SDK takes the organization as an id.** The CLI also accepts a slug there, because it has a cached `/cli/me` to resolve one against. An SDK has no session, and holds whatever the variable says.
 - **Nothing sends it today, and `/v1` could not take it.** `/v1` names no organization anywhere: an API key carries its organization, and the console's `/v1` relay forwards only `authorization`, `accept`, `content-type` and `content-length`. The field waits for a lane that takes one.
-- **Where the platform does read `x-organization-id`** (the person lanes behind the `/cli` door), the door refuses a value that is not an organization id before auth sees it: `400` `/errors/bad-request`, "x-organization-id is not an organization id". Auth's `/me` alone would read such a value as absent and answer the person's own organization, so a slug sent there by mistake would have acted elsewhere.
+- **Where the platform does read `x-organization-id`** (the person lanes behind the `/cli` door), the door refuses a value that is not an organization id before auth sees it: `400` `/errors/bad-request`, "x-organization-id is not an organization id". Auth's `/me` alone would read such a value as absent and act in the person's default organization, so a slug sent there by mistake would have acted elsewhere.
 
 They read no other variable — no alias for the endpoint or the key, by the pre-launch rule — but they are not yet uniform at the edges:
 

@@ -21,9 +21,9 @@ pub struct V1Organization {
     pub organization_id: String,
     /// The slug the console's paths name it by (`/{slug}`): derived once, from
     /// the name the organization is born with (a placeholder, `org-` and ten
-    /// random characters, when that name gives none), then moved only by a
-    /// change to its URL on Settings, never by a rename. Only the id names
-    /// the organization.
+    /// random characters, when its holder's first name gives none), then
+    /// moved only by a change to its URL on Settings, never by a rename. Only
+    /// the id names the organization.
     pub slug: String,
     /// Organization name, never empty.
     pub name: String,
