@@ -2,6 +2,14 @@ import type { Config } from './types.js';
 
 export const DEFAULT_ENDPOINT = 'https://telmoni.com';
 
+// Not /\/+$/: that regex takes quadratic time on a long run of slashes that
+// something follows, and the endpoint can come from anywhere.
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end--;
+  return value.slice(0, end);
+}
+
 /**
  * The primary client for the Telmoni platform.
  */
@@ -11,7 +19,7 @@ export class Telmoni {
   constructor(config?: Config) {
     const rawEndpoint = config?.endpoint || DEFAULT_ENDPOINT;
     this.config = {
-      endpoint: rawEndpoint.replace(/\/+$/, ''),
+      endpoint: trimTrailingSlashes(rawEndpoint),
       organizationId: config?.organizationId,
     };
     // Not enumerable: console.log, util.inspect and JSON.stringify skip it, so
