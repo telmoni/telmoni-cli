@@ -92,7 +92,8 @@ async fn execute_device(
     creds.update_from_me(&me, telmoni_org_env.is_some());
     let _ = store.save(creds);
 
-    // `/me` falls back — to the oldest organization they own, else the oldest
+    // `/me` falls back to the person's default organization — the one they
+    // chose in Account Settings, else the oldest they own, else the oldest
     // they belong to — when the one asked for is no longer theirs, so the
     // cached list's say-so is not enough.
     if let Some(env_org) = telmoni_org_env.as_deref()
@@ -136,9 +137,8 @@ fn resolve_device_active_org(
     telmoni_org_env: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(env_org) = telmoni_org_env {
-        // The cache, not the truth: a slug the organization took since —
-        // its first name, a URL change — is unknown here until `/cli/me` is
-        // read again.
+        // The cache, not the truth: a slug the organization took since, by a
+        // URL change, is unknown here until `/cli/me` is read again.
         let Some(named) = creds.organization_named(env_org) else {
             bail!(
                 "TELMONI_ORG names no organization in the cached list; run telmoni status \

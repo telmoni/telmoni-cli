@@ -129,13 +129,15 @@ pub struct Person {
 pub struct Organization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by (`/{slug}`): a placeholder
-    /// (`org-` and ten random characters) until the first name its owner
-    /// gives it reads as a slug and replaces it, then moved only by a change
-    /// to the URL setting. Only the id names the organization.
+    /// The slug the console's paths name it by (`/{slug}`): derived once, from
+    /// the name the organization is born with (a placeholder, `org-` and ten
+    /// random characters, when that name gives none), then moved only by a
+    /// change to its URL on Settings, never by a rename. Only the id names
+    /// the organization.
     pub slug: String,
-    /// Organization name.
-    pub name: Option<String>,
+    /// Organization name, never empty: a new one is born named after its
+    /// holder ("Ada's organization", else "My organization").
+    pub name: String,
     /// Owner email address.
     pub owner_email: Option<String>,
     /// Owner display name.
@@ -145,14 +147,11 @@ pub struct Organization {
 }
 
 impl Organization {
-    /// The organization's label: its trimmed `name`, else "Organization".
-    /// Never the owner's address: the owner names an organization before
-    /// anyone else sees it, and an address is a person's.
+    /// The organization's label: its name, as the console shows it. Never the
+    /// owner's address, which `/cli/me` carries beside it: an address is a
+    /// person's.
     pub fn label(&self) -> &str {
-        match self.name.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => name,
-            _ => "Organization",
-        }
+        self.name.trim()
     }
 }
 

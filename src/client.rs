@@ -19,27 +19,24 @@ pub struct V1Owner {
 pub struct V1Organization {
     /// Organization identifier (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by (`/{slug}`): a placeholder
-    /// (`org-` and ten random characters) until the first name its owner
-    /// gives it reads as a slug and replaces it, then moved only by a change
-    /// to the URL setting. Only the id names the organization.
+    /// The slug the console's paths name it by (`/{slug}`): derived once, from
+    /// the name the organization is born with (a placeholder, `org-` and ten
+    /// random characters, when that name gives none), then moved only by a
+    /// change to its URL on Settings, never by a rename. Only the id names
+    /// the organization.
     pub slug: String,
-    /// Organization name.
-    pub name: Option<String>,
+    /// Organization name, never empty.
+    pub name: String,
     /// Organization owner details.
     pub owner: Option<V1Owner>,
 }
 
 impl V1Organization {
-    /// The organization's label: its trimmed `name`, else "Organization".
-    /// Never the owner's address, which `/v1/organization` carries beside it:
-    /// an address is a person's, and the owner names the organization before
-    /// anyone else is in it.
+    /// The organization's label: its name, as the console shows it. Never the
+    /// owner's address, which `/v1/organization` carries beside it: an
+    /// address is a person's.
     pub fn label(&self) -> &str {
-        match self.name.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => name,
-            _ => "Organization",
-        }
+        self.name.trim()
     }
 }
 

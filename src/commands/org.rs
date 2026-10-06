@@ -90,25 +90,27 @@ async fn execute_switch(
 
     let me = fetch_me_for_session(transport, store, creds, Some(&target_id)).await?;
 
-    if me.active_organization_id.as_deref() != Some(&target_id) {
-        bail!("you are no longer in {organization}");
-    }
-
-    // ⚠ The cache named the organization, and a slug moves: a URL change in
-    // the console takes it along and another organization may hold it since.
-    // So the list just answered has to give the organization the same name.
-    // It is kept either way, which is what lets the next run read the name as
-    // the console does; the active organization moves only when the name
-    // still holds.
+    // ⚠ The cache named the organization, and two things may have moved since:
+    // `/me` acts in the person's default organization when the one asked for
+    // is no longer theirs, and a URL change in the console takes a slug
+    // along, after which another organization may hold it. So the answer has
+    // to act in the organization, and its list has to give it the same name.
+    // The list is kept either way, which is what lets `org list` and the next
+    // run read the organizations as the console does; the active organization
+    // moves to the one asked for only when both hold.
     creds.update_from_me(&me, true);
-    let holds = match creds.organization_named(organization) {
-        Some(named) if named.organization_id == target_id => Ok(()),
-        Some(_) => Err(anyhow!(
-            "{organization} now names another organization; run telmoni org list"
-        )),
-        None => Err(anyhow!(
-            "unknown organization {organization}; run telmoni org list"
-        )),
+    let holds = if me.active_organization_id.as_deref() != Some(&target_id) {
+        Err(anyhow!("you are no longer in {organization}"))
+    } else {
+        match creds.organization_named(organization) {
+            Some(named) if named.organization_id == target_id => Ok(()),
+            Some(_) => Err(anyhow!(
+                "{organization} now names another organization; run telmoni org list"
+            )),
+            None => Err(anyhow!(
+                "unknown organization {organization}; run telmoni org list"
+            )),
+        }
     };
     if holds.is_ok() {
         creds.active_organization_id = Some(target_id.clone());

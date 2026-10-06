@@ -28,7 +28,7 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 | Variable | Read by | Used for |
 |---|---|---|
 | `TELMONI_ENDPOINT` | `main`, and clap for `login --endpoint` | The base URL at sign-in, and for a signed-out `status` |
-| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a first name that reads as a slug replaces the placeholder and any URL change moves it, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
+| `TELMONI_ORG` | `main` | `logout` and `status`/`whoami`: an organization to act in instead of the stored active one, by id or slug. ⚠ A script carries the id: a URL change moves the slug, and the CLI resolves a slug against its cache, with no request (see [organizations](#organizations)) |
 | `TELMONI_API_KEY` | clap, for `login --key`; then `main`'s `.env` fallback | Signing in with an API key. Later commands read the key from the credentials file, never the variable. `login --help` hides its value (`hide_env_values`): clap would otherwise print the exported key beside the flag, into a terminal or a CI log. |
 
 **Debug builds also read a `.env`** from the working directory, after the real environment. Release builds compile that out.
@@ -83,7 +83,7 @@ A few details the table leaves out:
 
 ## Organizations
 
-**"Active organization" is the CLI's idea, not a server's.** The platform picks the organization per request, from the `x-organization-id` header. The CLI:
+**"Active organization" is the CLI's idea, not a server's.** The platform picks the organization per request, from the `x-organization-id` header; where none is named, or the one named is no longer the person's, `/me` acts in their default organization (the one they chose in Account Settings, else the oldest they own, else the oldest they belong to). A `login` names none, so the CLI's active organization starts as the default. The CLI:
 - caches the person's organizations (id, slug, label, role) from `/cli/me`;
 - keeps one as active in the credentials file, by id;
 - sends its id on the requests that act inside an organization.
@@ -99,14 +99,15 @@ A few details the table leaves out:
 
 - **Each names one organization**, and the two never look alike: a slug has no underscore and an id always has one. So a name never names two, and nothing is picked silently.
 - ⚠ **A label is not a name.** Labels are neither unique nor stable, so taking one means rules for the collisions that follow, and a wrong guess acts in another organization. `org list` shows the slug beside each; that is the human handle.
-- ⚠ **The slug is a name for people, never what goes on the wire, and never what a script carries.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header. A script that pins an organization pins its id: a first name that reads as a slug replaces the placeholder and any URL change moves it, and the next run fails.
-- ⚠ **A slug is a placeholder (`org-` and ten random characters) until the first name its owner gives it reads as a slug and replaces it (a name with no Latin letter or digit leaves the placeholder), and after that moves only when its URL is changed on the console's Settings page** (a rename moves nothing); another organization may then take the one it left. A `login` before the owner has named the organization caches the placeholder. The cache holds the slug `/cli/me` last answered, and nothing is fetched to resolve a name. So:
+- ⚠ **The slug is a name for people, never what goes on the wire, and never what a script carries.** The CLI resolves it to the id against its cache, and sends the id. The `/cli` door forwards no other organization header. A script that pins an organization pins its id: a URL change moves the slug, and the next run fails.
+- ⚠ **A slug is derived once, from the name the organization is born with** ("Ada's organization" reads as `adas-organization`; a name with no Latin letter or digit gives a placeholder, `org-` and ten random characters), **and after that moves only when its URL is changed on the console's Settings page** (a rename moves nothing); another organization may then take the one it left. The cache holds the slug `/cli/me` last answered, and nothing is fetched to resolve a name. So:
   - **The new slug is unknown here**, and refused before any request, until `login`, `status`, or an `org switch` by a name the cache does hold, rewrites the cache.
-  - **The old slug still resolves, to the organization that held it.** `status` and `org switch` hold it to the answer: `/cli/me`'s list must give that organization the same name. If it does not, the command fails (`status`: "no longer names the organization it did"; `org switch` says whether the name is now unknown or now another organization's), keeps the fresh list, and leaves the active organization where it was. The next run reads the name as the console does. Without the check, the CLI reported on, or switched to, an organization the console no longer shows at that URL.
+  - **The old slug still resolves, to the organization that held it.** `status` and `org switch` hold it to the answer: `/cli/me`'s list must give that organization the same name. If it does not, the command fails (`status`: "no longer names the organization it did"; `org switch` says whether the name is now unknown or now another organization's), keeps the fresh list, and leaves the active organization where it was. The next run reads the name as the console does.
+  - **Membership moves too.** A switch to an organization the person has left fails the same way ("you are no longer in …") and keeps the fresh list, so `org list` stops showing it. Whenever the list is rewritten, an active organization that is no longer the person's gives way to the one `/me` acted in, their default: kept, it would be sent on every request after. Without the check, the CLI reported on, or switched to, an organization the console no longer shows at that URL.
   - `logout` makes no such call. A moved slug there puts the revoke's audit record on the organization the cache names.
   - The id never moves.
 
-**An organization's label** is its trimmed `name`, else "Organization", and never its owner's address: the platform asks the owner to name a new organization before the console opens to them, so one with no name is seen by nobody else.
+**An organization's label** is its `name`, as the console shows it, and never its owner's address, which `/cli/me` and `/v1/organization` carry beside it. The platform never leaves a name empty: a new organization is born named after its holder ("Ada's organization", or "My organization" for someone with no name), and its owner renames it on Settings. So `name` is a `String`, not an `Option`: an answer without one does not decode.
 
 ## Output
 

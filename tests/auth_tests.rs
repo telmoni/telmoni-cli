@@ -695,48 +695,30 @@ async fn test_refresh_if_needed() {
     assert_eq!(transport.requests.lock().unwrap().len(), 3);
 }
 
-// 7. organization label: name when present, else Organization — never the owner's address
+// 7. organization label: its name, as the console shows it, whether its owner
+//    renamed it or it still has the one it was born with — never the owner's
+//    address, which /cli/me carries beside it
 #[test]
-fn test_organization_label_fallback() {
-    let org_with_name = Organization {
+fn test_organization_label() {
+    let renamed = Organization {
         organization_id: "org_1".to_string(),
-        slug: "org-1".to_string(),
-        name: Some("Acme Corp".to_string()),
+        slug: "acme-corp".to_string(),
+        name: "Acme Corp".to_string(),
         owner_email: Some("owner@example.com".to_string()),
-        owner_display_name: None,
+        owner_display_name: Some("Owner".to_string()),
         role: "owner".to_string(),
     };
-    assert_eq!(org_with_name.label(), "Acme Corp");
+    assert_eq!(renamed.label(), "Acme Corp");
 
-    let org_with_empty_name = Organization {
+    let as_born = Organization {
         organization_id: "org_2".to_string(),
-        slug: "org-2".to_string(),
-        name: Some("   ".to_string()),
-        owner_email: Some("owner@example.com".to_string()),
-        owner_display_name: None,
-        role: "admin".to_string(),
-    };
-    assert_eq!(org_with_empty_name.label(), "Organization");
-
-    let org_without_name = Organization {
-        organization_id: "org_3".to_string(),
-        slug: "org-3".to_string(),
-        name: None,
-        owner_email: Some("owner@example.com".to_string()),
-        owner_display_name: None,
+        slug: "adas-organization".to_string(),
+        name: "Ada's organization".to_string(),
+        owner_email: Some("ada@example.com".to_string()),
+        owner_display_name: Some("Ada Lovelace".to_string()),
         role: "member".to_string(),
     };
-    assert_eq!(org_without_name.label(), "Organization");
-
-    let org_without_owner = Organization {
-        organization_id: "org_4".to_string(),
-        slug: "org-4".to_string(),
-        name: None,
-        owner_email: None,
-        owner_display_name: None,
-        role: "member".to_string(),
-    };
-    assert_eq!(org_without_owner.label(), "Organization");
+    assert_eq!(as_born.label(), "Ada's organization");
 }
 
 // 7b. the same label under an API key: `/v1/organization` carries the owner's
@@ -744,27 +726,16 @@ fn test_organization_label_fallback() {
 #[test]
 fn test_v1_organization_label_never_uses_the_owners_address() {
     use telmoni_cli::client::{V1Organization, V1Owner};
-    let owner = || {
-        Some(V1Owner {
-            email: "owner@example.com".to_string(),
-            display_name: None,
-        })
-    };
     let named = V1Organization {
         organization_id: "org_1".to_string(),
         slug: "acme".to_string(),
-        name: Some("  Acme Corp ".to_string()),
-        owner: owner(),
+        name: "  Acme Corp ".to_string(),
+        owner: Some(V1Owner {
+            email: "owner@example.com".to_string(),
+            display_name: None,
+        }),
     };
     assert_eq!(named.label(), "Acme Corp");
-
-    let unnamed = V1Organization {
-        organization_id: "org_2".to_string(),
-        slug: "org-2".to_string(),
-        name: None,
-        owner: owner(),
-    };
-    assert_eq!(unnamed.label(), "Organization");
 }
 
 // 8. org switch: unknown organization rejected without network; active switch verified
@@ -901,6 +872,13 @@ async fn test_org_switch_logic() {
     .unwrap_err();
 
     assert_eq!(mismatch_err.to_string(), "you are no longer in org_2");
+    // The answer's list is kept, so `org list` stops showing the organization
+    // the person left; and since that was the active one, it gives way to the
+    // one `/me` acted in, their default.
+    let kept = store.load().unwrap().unwrap();
+    assert_eq!(kept.organizations.len(), 1, "the fresh list is kept");
+    assert_eq!(kept.organizations[0].organization_id, "org_1");
+    assert_eq!(kept.active_organization_id.as_deref(), Some("org_1"));
 }
 
 // 9. logout: deletes the file on a 401 at refresh, and on a 404 at revoke
@@ -1174,8 +1152,8 @@ async fn test_telmoni_org_env_validation() {
     )
     .await
     .unwrap_err();
-    // The cache may simply be stale — a first name or a URL change moved the
-    // slug — so the message blames the cache, not the person's membership.
+    // The cache may simply be stale — a URL change moved the slug — so the
+    // message blames the cache, not the person's membership.
     assert_eq!(
         status_err.to_string(),
         "TELMONI_ORG names no organization in the cached list; run telmoni status without it \
@@ -1288,12 +1266,11 @@ async fn test_status_updates_cached_credentials() {
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
 }
 
-// 13b. Status on an organization its owner has not named yet: signed in before
-//      the console's naming step, `/cli/me` answers the placeholder slug and no
-//      name. The label is "Organization", never the owner's address, and the
-//      slug is kept as answered.
+// 13b. Status on an organization as it was born: `/cli/me` answers it named
+//      after its holder, at the slug that name reads as. The label is that
+//      name, never the owner's address, and the slug is kept as answered.
 #[tokio::test]
-async fn test_status_labels_an_unnamed_organization() {
+async fn test_status_labels_an_organization_as_born() {
     use telmoni_cli::commands::status;
     use telmoni_cli::config::Config;
 
@@ -1327,8 +1304,8 @@ async fn test_status_labels_an_unnamed_organization() {
             "organizations": [
                 {
                     "organizationId": "org_1",
-                    "slug": "org-k3x9qz1a2b",
-                    "name": null,
+                    "slug": "alices-organization",
+                    "name": "Alice's organization",
                     "ownerEmail": "alice@example.com",
                     "role": "owner"
                 }
@@ -1351,8 +1328,8 @@ async fn test_status_labels_an_unnamed_organization() {
 
     let updated = store.load().unwrap().unwrap();
     assert_eq!(updated.organizations.len(), 1);
-    assert_eq!(updated.organizations[0].label, "Organization");
-    assert_eq!(updated.organizations[0].slug, "org-k3x9qz1a2b");
+    assert_eq!(updated.organizations[0].label, "Alice's organization");
+    assert_eq!(updated.organizations[0].slug, "alices-organization");
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_1"));
 }
 
