@@ -6,12 +6,12 @@ The `telmoni` command-line client and client SDK scaffolds ([`telmoni/telmoni-cl
 - **Pre-launch:** nothing has shipped. Change commands, flags, the credentials file and the config file directly to their ideal shape; no migration of an old file, no deprecated aliases, no shims.
 - **Quality gate:** never weaken a test or leave the tree broken.
 - **Ask first:** any dependency change (any edit to a `Cargo.toml`, `Cargo.lock` or an SDK's lockfile, lockfile-only refreshes included; nothing in the current scope needs one, and anything added must pass `cargo deny check`) and any external-state change, such as publishing a release or a package.
-- **Stateless machines:** the CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the credentials file.
+- **Stateless machines:** the CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the credentials file and the config file (`config.json` beside it).
 
 ## Where Things Live
 | Path | What |
 |---|---|
-| `src/` | The CLI: `main.rs` (the only environment reads), `auth/` (device flow, credentials), `commands/`, `client.rs` (`/v1`), `transport.rs` (HTTP, errors, User-Agent). |
+| `src/` | The CLI: `main.rs` and `login`'s `env` flags (the only environment reads, beside reqwest's proxy variables), `auth/` (device flow, credentials), `commands/`, `client.rs` (`/v1`), `transport.rs` (HTTP, errors, User-Agent). |
 | `sdk/` | SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`): configuration structs, no HTTP. |
 | `tests/` | Mock-based suites: no network, no sleeps. |
 | `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
@@ -25,7 +25,7 @@ The `telmoni` command-line client and client SDK scaffolds ([`telmoni/telmoni-cl
 
 ## Code Rules
 - **Tests are hermetic:** HTTP, and the poll loop's sleeps and clock, are injected (`Transport`, closures); the credentials path is a value, so tests write under `std::env::temp_dir()`.
-- **Environment only at the edge:** only `main.rs` reads the environment and passes values down. `main.rs` reads a `.env` in debug builds only, so a checkout the CLI runs in cannot redirect the endpoint or supply a key.
+- **Environment only at the edge:** only `main.rs`, and clap's `env` attributes on `login`'s flags, read the environment and pass values down; reqwest reads the proxy variables on its own. `main.rs` reads a `.env` in debug builds only, so a checkout the CLI runs in cannot redirect the endpoint or supply a key.
 - **Output:** stdout carries only the command's output; diagnostics go to stderr or `tracing`.
 
 ## Contracts
@@ -35,10 +35,10 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - **A 401** says by its problem type what ended. `unauthenticated` on `/cli/me` or revoke, and `unauthenticated` or `invalid-token` on refresh, end the session: delete the credentials file, print "run `telmoni login`", don't retry. `token-expired` or `invalid-token` on `/cli/me` or revoke get one refresh and one retry: the sweep turns an expired bearer's `token-expired` into `invalid-token`. Any other 401 ends nothing: `service-credential-rejected` is the console's own hop to the server failing. A 401 under an API key on `/v1` leaves the file alone; a 5xx never deletes it.
 - **Errors** are parsed in three shapes: RFC 9457 problem details (print `title: detail`), `{ "error": … }` (nothing the CLI calls — `/cli`, `/v1` — sends it today; kept for whatever sits in front of them), or anything else (`request failed (<status>)` plus the first 200 characters). Never print a token, refresh token, device code or API key; the user code is the only code shown.
 - **Every request** carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)`, and every bearer request that acts in an organization `x-organization-id`: always an id — the active organization's from `/cli/me`, or the one `TELMONI_ORG` or `org switch` names by id or exact slug, resolved against the cached list (the `/cli` door refuses anything but an `org_…` id; a label is never accepted). Nullable server fields are `Option`s.
-- **Labels and slugs:** an organization's label is its trimmed `name`, else `"Organization"`; never `ownerEmail`. Its slug is a placeholder (`org-` and ten random characters) until the first name its owner gives it reads as a slug and replaces it; after that only a change to its URL in the console's Settings moves it, never a rename.
+- **Labels and slugs:** an organization's label is its trimmed `name`; never `ownerEmail`. Its slug is set when it is created: the URL its owner chose, else one derived from its name when that is free, else a placeholder (`org-` and ten random characters); after that only a change to its URL in the console's Settings moves it, never a rename.
 - **API keys** start with `telmoni_` and open only `{endpoint}/v1`, never `/cli`; every `/v1` lane is a read today.
 - **Credentials** live in `dirs::config_dir()/telmoni/credentials.json`, mode `0600`, unencrypted.
-- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one credentials file, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines. The SDKs stay configuration-only until their contract exists.
+- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one credentials file, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines. The SDKs stay configuration-only until their contract exists, and grow together: a behaviour added to one lands in all four in the same change (`architecture/sdk.md`).
 
 ## Agent Hygiene
 - **This repo only:** change nothing in another repository (`telmoni/telmoni`, `telmoni/docs`, any other) unless the user says so for this task; that binds subagents too. Reading is fine.

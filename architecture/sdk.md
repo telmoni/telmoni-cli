@@ -106,6 +106,7 @@ The order, when a lane exists to call:
    - a `User-Agent` naming the SDK;
    - errors read in the platform's three shapes;
    - no credential in any output.
+4. **The four grow together.** A behaviour added to one SDK lands in all four in the same change, with its row in the table above; a language that lags is a customer who cannot start.
 
 ## Where it lives
 
