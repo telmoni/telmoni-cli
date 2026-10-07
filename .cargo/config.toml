@@ -2,4 +2,4 @@
 # `cargo xtask ci` is the full local gate (fmt, toolchain = rust-version, clippy -D warnings,
 # build, test, docs, deny).
 [alias]
-xtask = "run --quiet --package xtask --"
+xtask = "run --locked --quiet --package xtask --"

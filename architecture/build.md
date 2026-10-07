@@ -80,9 +80,9 @@ Each SDK has its own contract tests (see [SDKs](sdk.md#what-the-tests-pin)).
 ## Packaging
 
 `cargo xtask dist` (`xtask/src/dist.rs`) packages the binary for the machine it runs on:
-- **The build.** `cargo build --package telmoni-cli --bin telmoni --release`.
+- **The build.** `cargo build --locked --package telmoni-cli --bin telmoni --release`.
   - The release profile uses thin LTO, one codegen unit, and stripped symbols.
-  - It does not pass `--locked`.
+  - `--locked`, as on every gate step, so a release never carries a version the gate did not check.
 - **Where it looks.** It expects the binary at `<workspace>/target/release/telmoni`. A custom `CARGO_TARGET_DIR` is not followed.
 - **The archive.** `dist/telmoni-<os>-<arch>.tar.gz`, named from the host's `std::env::consts`, for example `telmoni-macos-aarch64` or `telmoni-linux-x86_64`. The archive holds the bare `telmoni` binary at its root.
 - **The checksum.** `dist/SHA256SUMS` holds `<sha256>  <archive>`, written with `shasum -a 256` or `sha256sum`, and replaced on each run.

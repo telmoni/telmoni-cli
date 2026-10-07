@@ -13,6 +13,7 @@ const BINARY_NAME: &str = "telmoni";
 pub(crate) fn dist() -> Result<()> {
     cargo(&[
         "build",
+        "--locked",
         "--package",
         "telmoni-cli",
         "--bin",
