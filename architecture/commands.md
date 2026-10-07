@@ -36,9 +36,10 @@ The `telmoni` binary is a thin shell over a library. `src/lib.rs` exports `auth`
 
 **A variable that is set but blank** is treated as unset by `main`. clap does not apply that filter, so an exported but empty `TELMONI_API_KEY` reaches `login` as an empty key and is refused.
 
-**Two reads happen outside `main`'s own code:**
+**Three reads happen outside `main`'s own code:**
 - `dirs`, which `main` alone calls, reads the platform's own variables (`HOME`, `XDG_CONFIG_HOME`) to find the configuration directory;
-- clap reads the two variables above directly.
+- clap reads the two variables above directly;
+- `reqwest`, the transport, reads the system proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`, in either case), as every reqwest client does unless built with `no_proxy()`: a proxy named there carries the CLI's requests.
 
 ## The configuration file
 
