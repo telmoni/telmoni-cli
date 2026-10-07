@@ -172,6 +172,11 @@ fn test_credentials_round_trip() {
     assert!(store.path.exists());
     store.clear().unwrap();
     assert!(!store.path.exists());
+
+    // Clear says so when the file cannot be deleted: a directory in its place
+    std::fs::create_dir(&store.path).unwrap();
+    assert!(store.clear().is_err());
+    std::fs::remove_dir(&store.path).unwrap();
 }
 
 // 3. The LaneError parser: a problem with and without detail, a 429 with retry_after_secs,

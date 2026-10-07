@@ -39,7 +39,10 @@ pub async fn execute(
         }
     }
 
-    let _ = store.clear();
+    // A file that stays signs in still, so "Signed out" would be false.
+    store
+        .clear()
+        .map_err(|err| anyhow::anyhow!("{err}; remove it yourself"))?;
     println!("Signed out");
     Ok(())
 }

@@ -554,7 +554,9 @@ fn ended_or_surfaced(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Er
 }
 
 fn session_ended(store: &CredentialsStore) -> anyhow::Error {
-    let _ = store.clear();
+    if let Err(err) = store.clear() {
+        tracing::warn!(error = %err, "the ended session's credentials file stays; remove it yourself");
+    }
     anyhow::Error::new(SessionEnded)
 }
 

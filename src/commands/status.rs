@@ -90,7 +90,13 @@ async fn execute_device(
 
     let me = fetch_me_for_session(transport, store, creds, active_org_id.as_deref()).await?;
     creds.update_from_me(&me, telmoni_org_env.is_some());
-    let _ = store.save(creds);
+    // Only the cached list is at stake: the tokens a refresh rotated were
+    // saved by the refresh itself, or it failed.
+    if let Err(err) = store.save(creds) {
+        eprintln!(
+            "note: the organization list could not be saved ({err}); the next command fetches it again"
+        );
+    }
 
     // `/me` falls back to the person's default organization — the one they
     // chose in Account Settings, else the oldest they own, else the oldest

@@ -390,12 +390,20 @@ impl CredentialsStore {
         Ok(())
     }
 
-    /// Deletes the credentials file.
+    /// Deletes the credentials file. One already gone is fine; one that
+    /// cannot be deleted is an error, since the token or key it holds still
+    /// signs in.
     pub fn clear(&self) -> Result<()> {
-        if self.path.exists() {
-            std::fs::remove_file(&self.path).ok();
-            debug!(path = %self.path.display(), "credentials file deleted");
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {
+                debug!(path = %self.path.display(), "credentials file deleted");
+                Ok(())
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(anyhow::anyhow!(
+                "deleting the credentials file {}: {err}",
+                self.path.display()
+            )),
         }
-        Ok(())
     }
 }
