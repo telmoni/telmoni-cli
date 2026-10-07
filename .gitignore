@@ -1,7 +1,8 @@
 /target
 **/*.rs.bk
 # Crash core dumps (e.g. a linker OOM writes `core.<pid>` to the cwd): never committed.
-core.*
+# Numbered, so a source file named core.rs or core.ts is not ignored with them.
+core.[0-9]*
 *.log
 .claude
 
