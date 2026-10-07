@@ -136,6 +136,7 @@ jobs:
     if: always()
     needs: [gate, sdks, lint-workflows]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Verify every job passed
         env:
