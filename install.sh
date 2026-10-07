@@ -6,7 +6,7 @@
 # Environment:
 #   TELMONI_VERSION=0.0.1       that tag's assets rather than the latest release
 #   TELMONI_INSTALL_DIR         override installation directory (default: /usr/local/bin or ~/.local/bin)
-#   TELMONI_INSTALL_DRY_RUN=1   print each command that would change this machine, run none (also --dry-run)
+#   TELMONI_INSTALL_DRY_RUN=1   print each command that would change this machine, run none
 
 set -eu
 
@@ -40,7 +40,7 @@ as_admin() {
     elif available doas; then
         doas "$@"
     else
-        error "Administrator privileges required to write to $1. Re-run as root, install sudo/doas, or set TELMONI_INSTALL_DIR."
+        error "Administrator privileges required to write to ${INSTALL_DIR}. Re-run as root, install sudo/doas, or set TELMONI_INSTALL_DIR."
     fi
 }
 
