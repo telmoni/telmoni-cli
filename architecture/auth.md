@@ -161,7 +161,7 @@ The door has no sign-out lane of its own, so the CLI signs out through the same 
 - **Storing it.** It is kept in the credentials file as `api_key`, with the endpoint. `TELMONI_API_KEY` is read only by `login`, not by later commands.
 - **Using it.** It opens only `{endpoint}/v1` reads, never `/cli` (AGENTS.md). Today only `status` uses it, through `GET /v1/organization` (see [transport](transport.md#the-v1-client)).
 
-An API key is an organization's key, minted on one of its projects in the console. The platform checks it on every request: it must be live, its organization active, and the organization's beta access and the public API switched on.
+An API key is an organization's key, minted on one of its projects in the console. The platform checks it on every request: it must be live, its organization active, and the public API switched on for that organization.
 
 ## Where it disagrees with the platform
 

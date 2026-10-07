@@ -1580,7 +1580,6 @@ async fn test_organization_wire_shape() {
         "projectOffers": [],
         "flags": {
             "api_tokens": true,
-            "beta_access": true,
             "connectors": true,
             "members": true,
             "public_api": true,

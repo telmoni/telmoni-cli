@@ -19,11 +19,11 @@ pub struct V1Owner {
 pub struct V1Organization {
     /// Organization identifier (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by (`/{slug}`): derived once, from
-    /// the name the organization is born with (a placeholder, `org-` and ten
-    /// random characters, when its holder's first name gives none), then
-    /// moved only by a change to its URL on Settings, never by a rename. Only
-    /// the id names the organization.
+    /// The slug the console's paths name it by (`/{slug}`): set once at birth,
+    /// to the URL its founder chose or else derived from the name it is born
+    /// with (a placeholder, `org-` and ten random characters, when that name
+    /// gives none), then moved only by a change to its URL on Settings, never
+    /// by a rename. Only the id names the organization.
     pub slug: String,
     /// Organization name, never empty.
     pub name: String,

@@ -65,7 +65,7 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 `src/client.rs` is the CLI's only `/v1` call: `GET {endpoint}/v1/organization`, with the API key as the bearer.
 - The answer is the platform's snake-case organization: its id, its slug, its name, and its owner, or none.
-- The platform checks the key on every request: live, its organization active, the organization's beta access and the public API switched on.
+- The platform checks the key on every request: live, its organization active, the public API switched on for that organization.
 - The console's `/v1` relay allows only `GET` and `HEAD`, and meters each key and each source address.
 
 A `/v1` error never touches the credentials file. An API key's validity is the platform's to decide, request by request.

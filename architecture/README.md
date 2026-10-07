@@ -75,7 +75,7 @@ install.sh          the installer, checksum-verified
 | **User code** | The short code the person types into the console to approve a sign-in. The only code shown. |
 | **Session row** | The platform's record of a sign-in, listed under Active sessions on the person's Privacy page. `sessionRowId` is how the CLI refreshes and revokes it. |
 | **Active organization** | The CLI's chosen organization, sent as `x-organization-id`. The platform itself picks one per request. |
-| **Slug** | The name an organization goes by in the console's URL. Derived once, from the name the organization is born with (a placeholder, `org-` and ten random characters, when its holder's first name gives none); after that only a change to its URL setting moves it, never a rename. The CLI takes one wherever it takes an id, and sends the id. |
+| **Slug** | The name an organization goes by in the console's URL. Set once at birth, to the URL its founder chose or else derived from the name the organization is born with (a placeholder, `org-` and ten random characters, when that name gives none); after that only a change to its URL setting moves it, never a rename. The CLI takes one wherever it takes an id, and sends the id. |
 | **Default organization** | The organization `/me` acts in when the request names none, or names one the person has left: the one they chose in Account Settings, else the oldest they own, else the oldest they belong to. The CLI's active organization starts as it, and returns to it once the person has left the active one. |
 | **Credentials file** | `credentials.json` in the configuration directory, mode `0600`, unencrypted: the CLI's only state |
 

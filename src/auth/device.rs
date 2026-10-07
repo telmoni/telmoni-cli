@@ -129,14 +129,15 @@ pub struct Person {
 pub struct Organization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by (`/{slug}`): derived once, from
-    /// the name the organization is born with (a placeholder, `org-` and ten
-    /// random characters, when its holder's first name gives none), then
-    /// moved only by a change to its URL on Settings, never by a rename. Only
-    /// the id names the organization.
+    /// The slug the console's paths name it by (`/{slug}`): set once at birth,
+    /// to the URL its founder chose or else derived from the name it is born
+    /// with (a placeholder, `org-` and ten random characters, when that name
+    /// gives none), then moved only by a change to its URL on Settings, never
+    /// by a rename. Only the id names the organization.
     pub slug: String,
-    /// Organization name, never empty: a new one is born named after its
-    /// holder ("Ada's organization", else "My organization").
+    /// Organization name, never empty: a provisioned one is born named after
+    /// its holder ("Ada's organization", else "My organization"), and one
+    /// created from the console's switcher under the name its founder gave.
     pub name: String,
     /// Owner email address.
     pub owner_email: Option<String>,
