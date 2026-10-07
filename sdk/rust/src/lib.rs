@@ -63,26 +63,31 @@ impl Config {
         }
     }
 
-    /// Loads configuration from standard environment variables:
+    /// Loads configuration from standard environment variables, an empty or
+    /// whitespace value counting as unset, as the CLI reads them:
     /// - `TELMONI_ENDPOINT` (or defaults to `https://telmoni.com`)
     /// - `TELMONI_ORG`
     /// - `TELMONI_API_KEY`
     #[must_use]
     pub fn from_env() -> Self {
-        let endpoint = std::env::var("TELMONI_ENDPOINT")
-            .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string())
+        let endpoint = env_var("TELMONI_ENDPOINT")
+            .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string())
             .trim_end_matches('/')
             .to_string();
 
-        let organization_id = std::env::var("TELMONI_ORG").ok();
-        let api_key = std::env::var("TELMONI_API_KEY").ok();
-
         Self {
             endpoint,
-            organization_id,
-            api_key,
+            organization_id: env_var("TELMONI_ORG"),
+            api_key: env_var("TELMONI_API_KEY"),
         }
     }
+}
+
+/// A variable's value, `None` when it is unset, empty or whitespace.
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// The Telmoni client instance: holds configuration until the SDK's contract exists.

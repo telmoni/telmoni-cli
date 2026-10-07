@@ -44,7 +44,7 @@ They read no other variable — no alias for the endpoint or the key, by the pre
 
 | Behaviour | Rust | TypeScript | Go | Python |
 |---|---|---|---|---|
-| An empty `TELMONI_ENDPOINT` falls back to the default | no | yes | yes | yes |
+| An empty `TELMONI_ENDPOINT` falls back to the default | yes, whitespace too | yes | yes | yes |
 | An empty endpoint passed explicitly falls back to the default | no | yes | yes | no |
 
 When an SDK grows a client, these should converge on the CLI's rules first. The CLI reads only the `TELMONI_*` variables named in [commands](commands.md#the-environment-at-the-edge), and treats an empty or whitespace endpoint as unset.
