@@ -21,4 +21,4 @@ const telmoni = Telmoni.fromEnv();
 ```
 
 The variables, their fallbacks and the other SDKs are documented at
-[docs.telmoni.com/api/sdks](https://docs.telmoni.com/api/sdks/).
+[telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks).

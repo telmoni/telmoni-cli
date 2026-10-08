@@ -1572,7 +1572,6 @@ async fn test_organization_wire_shape() {
                 "ownershipOfferExpiresAt": null
             }
         ],
-        "deletedOrganizations": [],
         "activeOrganizationId": "org_alpha",
         "defaultOrganizationId": "org_alpha",
         "memberships": [],

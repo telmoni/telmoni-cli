@@ -1,6 +1,6 @@
 # Architecture
 
-How the Telmoni CLI and its SDK scaffolds are built, and why. These pages are for people and agents changing this repo. How to use the CLI is in [`telmoni/docs`](https://github.com/telmoni/docs) (`api/cli.mdx`, `api/sdks.mdx`) and this repo's README.
+How the Telmoni CLI and its SDK scaffolds are built, and why. These pages are for people and agents changing this repo. How to use the CLI is in the platform's docs, [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli) and [api/sdks](https://telmoni.com/docs/api/sdks) (`web/content/docs/api/` in [`telmoni/telmoni`](https://github.com/telmoni/telmoni)), and this repo's README.
 
 The CLI is a **client of the platform and of nothing else**:
 - nothing here runs on a server, holds a database or verifies a token;
@@ -82,7 +82,7 @@ install.sh          the installer, checksum-verified
 ## Keeping these pages true
 
 - **A change that alters what a page says updates that page in the same change.** The pages follow the code's layout.
-- **A change a user can see** also names the customer pages it leaves wrong (`api/cli.mdx`, `api/sdks.mdx` in `telmoni/docs`).
+- **A change a user can see** also names the customer pages it leaves wrong (`web/content/docs/api/cli.mdx` and `api/sdks.mdx` in `telmoni/telmoni`).
 - **Name the constant, don't copy the value**, where the code names it. Some of the CLI's numbers are unnamed literals today: the 60-second refresh skew, the 5-second `slow_down` step, the 1-second interval floor. Pages describe them in words.
 - **Say why.** Write down what broke, or what would break.
 - **A disagreement with the platform is recorded in [auth](auth.md#where-it-disagrees-with-the-platform)** until one side changes.

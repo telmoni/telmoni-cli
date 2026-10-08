@@ -32,13 +32,13 @@ telmoni org list    # the organizations you belong to; `org switch` changes the 
 telmoni logout
 ```
 
-`telmoni login --key telmoni_…` signs in with an API key, for CI and servers. Every command, flag and variable is documented at [docs.telmoni.com/api/cli](https://docs.telmoni.com/api/cli/).
+`telmoni login --key telmoni_…` signs in with an API key, for CI and servers. Every command, flag and variable is documented at [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli).
 
 Add `-v` to any command to log to stderr which files it read and wrote, where its endpoint came from, and each request and answer. It never logs a token or a key.
 
 ## SDKs
 
-`sdk/` holds configuration-only scaffolds for TypeScript, Python, Go and Rust; each grows a client once its contract exists. See [docs.telmoni.com/api/sdks](https://docs.telmoni.com/api/sdks/).
+`sdk/` holds configuration-only scaffolds for TypeScript, Python, Go and Rust; each grows a client once its contract exists. See [telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks).
 
 ## Layout
 
@@ -52,7 +52,7 @@ architecture/   how it is built, and why
 
 ## Contributing
 
-How to contribute, the AI policy, the Code of Conduct and the security policy are on the docs site: [docs.telmoni.com/contributing](https://docs.telmoni.com/contributing/introduction/). [Developing](https://docs.telmoni.com/contributing/developing/#the-cli-and-sdks) gets you building.
+How to contribute, the AI policy, the Code of Conduct and the security policy are in the docs: [telmoni.com/docs/contributing](https://telmoni.com/docs/contributing/introduction). [Developing](https://telmoni.com/docs/contributing/developing#the-cli-and-sdks) gets you building.
 
 ## License
 
