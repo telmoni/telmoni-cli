@@ -1,4 +1,4 @@
-# Architecture
+# Docs
 
 How the Telmoni CLI and its SDK scaffolds are built, and why. These pages are for people and agents changing this repo. How to use the CLI is in the platform's docs, [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli) and [api/sdks](https://telmoni.com/docs/api/sdks) (`web/content/docs/api/` in [`telmoni/telmoni`](https://github.com/telmoni/telmoni)), and this repo's README.
 
@@ -7,12 +7,15 @@ The CLI is a **client of the platform and of nothing else**:
 - every request goes to one base URL;
 - the platform's code is the contract.
 
-How the platform is built is in [`telmoni/telmoni`](https://github.com/telmoni/telmoni)'s `architecture/`, checked out as `../telmoni/architecture/`.
+How the platform is built is in [`telmoni/telmoni`](https://github.com/telmoni/telmoni)'s `ARCHITECTURE.md` and `docs/`, checked out as `../telmoni/`.
+
+Start with [ARCHITECTURE.md](../ARCHITECTURE.md), at the repository's root: the CLI and its SDKs on one page, linking down to the area pages below.
 
 ## Pages
 
 | Page | Covers |
 |---|---|
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | The CLI and its SDKs on one page: purpose, goals, context, building blocks, key flows, data, security, distribution, failure, what comes next, decisions, known gaps |
 | [commands.md](commands.md) | Startup, the environment at the edge, the configuration file, each command, organizations, output |
 | [auth.md](auth.md) | The device flow, the credentials file, refresh, when a session has ended, signing out, API keys, where the CLI and the platform disagree |
 | [transport.md](transport.md) | The HTTP seam, what every request carries, error shapes, the `/v1` client, what is never printed |
@@ -35,7 +38,7 @@ flowchart LR
 
 ## Rules that hold everywhere
 
-1. **One base URL.** `https://telmoni.com`, unless `TELMONI_ENDPOINT` says otherwise. No other hostname appears in `src/` or `sdk/`. Plain HTTP reaches only this machine. ([transport](transport.md))
+1. **One base URL.** `https://telmoni.com`, unless `TELMONI_ENDPOINT` says otherwise. Nothing in `src/` or `sdk/` calls another host. Plain HTTP is refused for any host but this machine, though a proxy the system names still receives it. ([transport](transport.md#the-seam))
 2. **The platform's code is the contract.** Read the `/cli` door, `/me` and `/v1` in `telmoni/telmoni` before touching `src/auth/` or `src/client.rs`. Report a disagreement there rather than working around it here. ([auth](auth.md#where-it-disagrees-with-the-platform))
 3. **Stateless machines.** The CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the credentials file. That is why sign-in is the device flow. ([auth](auth.md#the-device-flow))
 4. **The environment is read only at the edge.** `main.rs` reads it and passes values down. A `.env` is read in debug builds only. ([commands](commands.md#the-environment-at-the-edge))

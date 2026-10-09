@@ -13,7 +13,7 @@ The platform's code is the contract (AGENTS.md):
 - the revoke, `crates/auth/src/handler/sessions.rs`;
 - `/v1`, `crates/auth/src/handler/v1.rs`.
 
-The platform's own side is in `telmoni/telmoni`'s `architecture/identity.md`. A disagreement is reported there, not worked around here.
+The platform's own side is in `telmoni/telmoni`'s `docs/identity.md`. A disagreement is reported there, not worked around here.
 
 ## Contents
 

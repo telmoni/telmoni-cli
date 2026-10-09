@@ -93,7 +93,7 @@ There is no cross-compilation. Each platform is built natively by the release wo
 
 `install.sh` is POSIX `sh`, run with `set -eu`, and is installed by `curl … | sh`:
 
-1. **Detect the platform.** `uname -s` and `uname -m` are mapped to an archive name. Only `macos-aarch64` and `linux-x86_64` are built. Any other platform gets a message to build from source.
+1. **Detect the platform.** `uname -s` and `uname -m` are mapped to an archive name. Only `macos-aarch64` and `linux-x86_64` are built. Intel macOS and ARM Linux get a message to build from source; any other platform is refused as unsupported.
 2. **Preflight.** It needs `curl`, `tar`, and `sha256sum` or `shasum`.
 3. **Choose where to install:**
    - `TELMONI_INSTALL_DIR` if set;

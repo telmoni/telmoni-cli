@@ -47,7 +47,9 @@ src/            the CLI: commands, the device-flow sign-in, the HTTP transport
 sdk/            the SDK scaffolds: typescript/, python/, go/, rust/
 tests/          mock-based suites, no network
 xtask/          the gate (`cargo xtask ci`) and release packaging (`cargo xtask dist`)
-architecture/   how it is built, and why
+install.sh      the installer: this machine's archive from a release, checked against SHA256SUMS
+docs/           how it is built, and why, one page per area
+ARCHITECTURE.md the whole of it on one page, linking down to docs/
 ```
 
 ## Contributing

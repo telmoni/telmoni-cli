@@ -6,7 +6,7 @@ Every request the CLI makes goes through one seam, the `Transport` trait (`src/t
 
 The CLI talks to nothing else.
 
-⚠ **One base URL, and no other hostname.** It is `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise, and `http://localhost:3000` locally. No other host appears in `src/` or `sdk/` (AGENTS.md). The console relays everything to the server, so the CLI never needs the server's address.
+⚠ **One base URL, and no other hostname.** It is `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise, and `http://localhost:3000` locally. Nothing in `src/` or `sdk/` calls another host (AGENTS.md). The console relays everything to the server, so the CLI never needs the server's address.
 
 ## Contents
 
@@ -27,10 +27,11 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 **TLS** is rustls with bundled web PKI roots, not the operating system's trust store. The CLI trusts the same roots on every machine.
 
-⚠ **Plain HTTP reaches only this machine** (`refuse_cleartext`). The real transport refuses an `http://` URL before anything is sent, unless its host is `localhost`, a name under it, or a loopback address (`127.0.0.0/8`, `[::1]`).
+⚠ **Plain HTTP is refused for any host but this machine** (`refuse_cleartext`). The real transport refuses an `http://` URL before anything is sent, unless its host is `localhost`, a name under it, or a loopback address (`127.0.0.0/8`, `[::1]`).
 - **It does not ask what the request carries.** Every lane sends a credential or is answered one: the device start sends none, and is answered the device code. Judged request by request, a login against a plain-HTTP host printed a code and opened a browser before its first poll was refused.
 - **The host is read from the parsed URL.** An IPv6 address comes in brackets, and `localhost.example.com` is not this machine.
 - So `http://localhost:3000` works, and a plain-HTTP endpoint anywhere else fails at its first request. That includes a local platform reached by another name, from inside a container for one.
+- ⚠ **A proxy still receives it.** `reqwest` honours the system's proxy variables (see [commands](commands.md#the-environment-at-the-edge)) and exempts no loopback host, so with `HTTP_PROXY` or `ALL_PROXY` set and the host not in `NO_PROXY`, a plain-HTTP request to this machine goes to the proxy in the clear, bearer and all.
 
 **The client follows no redirect.** No lane answers a 3xx, and following one would resend the bearer to any same-host, same-port target whatever its scheme: `reqwest` strips `Authorization` only when the host or the known default port changes. So a 3xx is answered as the error it is.
 
