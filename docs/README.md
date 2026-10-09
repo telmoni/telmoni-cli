@@ -38,7 +38,7 @@ flowchart LR
 
 ## Rules that hold everywhere
 
-1. **One base URL.** `https://telmoni.com`, unless `TELMONI_ENDPOINT` says otherwise. Nothing in `src/` or `sdk/` calls another host. Plain HTTP is refused for any host but this machine, though a proxy the system names still receives it. ([transport](transport.md#the-seam))
+1. **One base URL.** `https://telmoni.com`, unless `TELMONI_ENDPOINT` says otherwise. Nothing in `src/` or `sdk/` calls another host. Plain HTTP reaches only this machine, and never through a proxy. ([transport](transport.md#the-seam))
 2. **The platform's code is the contract.** Read the `/cli` door, `/me` and `/v1` in `telmoni/telmoni` before touching `src/auth/` or `src/client.rs`. Report a disagreement there rather than working around it here. ([auth](auth.md#where-it-disagrees-with-the-platform))
 3. **Stateless machines.** The CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the credentials file. That is why sign-in is the device flow. ([auth](auth.md#the-device-flow))
 4. **The environment is read only at the edge.** `main.rs` reads it and passes values down. A `.env` is read in debug builds only. ([commands](commands.md#the-environment-at-the-edge))

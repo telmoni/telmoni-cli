@@ -46,6 +46,7 @@ How the library suite stays hermetic:
 
 **Not covered by tests:**
 - the real transport's deadlines and connection failures, which would take a socket and real waiting. The mock stands in for both, and the code that reads them is covered;
+- the direct client's lack of a proxy, which would take a socket to watch. Which URLs take it is pinned (`bypasses_proxy`), and that it has none is reqwest's `no_proxy()`;
 - the real browser opening;
 - a signed-in run of the binary, which would need a platform to answer it.
 

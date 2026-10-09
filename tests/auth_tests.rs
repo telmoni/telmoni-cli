@@ -2082,6 +2082,33 @@ fn test_cleartext_http_only_to_this_machine() {
     }
 }
 
+// This machine is reached past any proxy the environment names, by the same
+// reading of the host: a proxy would carry plain HTTP to it, bearer and all,
+// off it in the clear. Every other host goes through the proxy, if any.
+#[test]
+fn test_this_machine_bypasses_any_proxy() {
+    use telmoni_cli::transport::bypasses_proxy;
+
+    for direct in [
+        "http://localhost:3000/cli/me",
+        "https://localhost:3000/cli/me",
+        "http://app.localhost:3000/cli/me",
+        "http://127.0.0.1:3000/cli/me",
+        "http://[::1]:3000/cli/me",
+    ] {
+        assert!(bypasses_proxy(direct), "{direct}");
+    }
+    for proxied in [
+        "https://telmoni.com/cli/me",
+        "http://localhost.example.com/cli/me",
+        "http://127.0.0.1.example.com/cli/me",
+        "https://192.168.1.10:3000/cli/me",
+        "not a url",
+    ] {
+        assert!(!bypasses_proxy(proxied), "{proxied}");
+    }
+}
+
 // 21. A label is not a name: `org switch` takes an id or a slug, and a label
 //     is unknown even when one organization alone carries it. Two called
 //     Acme, one at /acme: "Acme" is refused before any request, "acme" is

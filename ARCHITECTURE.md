@@ -99,7 +99,7 @@ flowchart LR
 | **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI | [auth](docs/auth.md#the-device-flow) |
 | **The platform's console** | The one host the CLI calls: the `/cli` door for a session, the `/v1` relay for a key | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id | [transport](docs/transport.md#what-every-request-carries) |
 | **The platform's server** | Behind the console, never called directly: it issues and ends sessions, and answers `/me` and `/v1` | Nothing directly | [the platform's identity page](https://github.com/telmoni/telmoni/blob/main/docs/identity.md#the-cli) |
-| **A proxy** | Whatever the system's proxy variables name | Every request: an HTTPS one tunnelled through it, still encrypted, and a plain-HTTP one to this machine in the clear | [commands](docs/commands.md#the-environment-at-the-edge), [transport](docs/transport.md#the-seam) |
+| **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct | [commands](docs/commands.md#the-environment-at-the-edge), [transport](docs/transport.md#the-seam) |
 | **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` | [build](docs/build.md#release) |
 
 ## Building blocks
@@ -136,7 +136,7 @@ flowchart TB
 | `auth/storage.rs` | The credentials file, read leniently and written atomically | `credentials.json` | [auth](docs/auth.md#the-credentials-file) |
 | `config.rs` | The configuration file, and where the base URL comes from | `config.json` | [commands](docs/commands.md#the-configuration-file) |
 | `client.rs` | The one `/v1` call, under an API key | — | [transport](docs/transport.md#the-v1-client) |
-| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, the platform's error shapes | — | [transport](docs/transport.md) |
+| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes | — | [transport](docs/transport.md) |
 | `sdk/` | Four configuration-only scaffolds, one per language | — | [sdk](docs/sdk.md) |
 | `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — | [build](docs/build.md) |
 | `install.sh` | The installer: the machine's archive, a version, the checksum | — | [build](docs/build.md#installsh) |
@@ -173,7 +173,7 @@ A file that cannot be read or parsed reads as signed out, or as the default conf
 ## Security
 
 - **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin ([transport](docs/transport.md#the-seam), [auth](docs/auth.md#the-device-flow)).
-- **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and even then a proxy the system's variables name receives it in the clear ([transport](docs/transport.md#the-seam)).
+- **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy ([transport](docs/transport.md#the-seam)).
 - **Every request has a deadline**, set past the console's own wait on the server, so a stalled host fails in seconds ([transport](docs/transport.md#the-seam)).
 - **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, and a credentials file that does not parse is logged under `-v` by line and column, never by its contents ([transport](docs/transport.md#what-is-never-printed)).
 - **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory ([commands](docs/commands.md#the-environment-at-the-edge)).
@@ -221,6 +221,7 @@ A file that cannot be read or parsed reads as signed out, or as the default conf
 | **The environment at the edge, a `.env` in debug builds only** | A released binary run in somebody else's checkout cannot take its endpoint or key | A `.env` does nothing for a released binary | [commands](docs/commands.md#the-environment-at-the-edge) |
 | **Organizations by id or slug, never by label** | A label is neither unique nor stable, and a wrong guess acts in another organization | People type a slug, not a name | [commands](docs/commands.md#organizations) |
 | **No redirect followed, and plain HTTP only to a loopback endpoint** | A bearer must neither follow a redirect nor cross a network in the clear | A platform behind a redirect, or plain HTTP to another host, does not work | [transport](docs/transport.md#the-seam) |
+| **This machine past any proxy** | A proxy would carry plain HTTP to this machine off it in the clear, and a remote one cannot reach its ports | A proxy set up to watch local traffic sees none of the CLI's | [transport](docs/transport.md#the-seam) |
 | **rustls with bundled roots** | The same trust on every machine | A root added to the system's store is not trusted | [transport](docs/transport.md#the-seam) |
 | **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` | [transport](docs/transport.md#what-is-never-printed) |
 | **SDKs configuration-only, growing together** | A client ahead of its contract freezes a guess, and a language that lags is a customer who cannot start | No SDK call works today | [sdk](docs/sdk.md) |
@@ -230,12 +231,11 @@ A file that cannot be read or parsed reads as signed out, or as the default conf
 ## Known gaps
 
 The ones that shape the design, each kept on its page until it is closed:
-- **A proxy receives plain HTTP to this machine.** The transport honours the system's proxy variables and exempts no loopback host, so with `HTTP_PROXY` or `ALL_PROXY` set and the host not in `NO_PROXY`, a request to an `http://localhost` endpoint reaches the proxy in the clear, bearer and all ([transport](docs/transport.md#the-seam)).
 - **Two CLI processes writing at once** are not locked against each other: the last rename wins ([auth](docs/auth.md#the-credentials-file)).
 - **Signing in again** leaves the earlier session live, under Active sessions, until it ends there ([auth](docs/auth.md#the-device-flow)).
 - **`install.sh` checks the checksum, not the provenance**, since checking it needs `gh` ([build](docs/build.md#installsh)).
 - **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless ([auth](docs/auth.md#where-it-disagrees-with-the-platform)).
 - **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor ([docs](docs/README.md#keeping-these-pages-true)).
-- **Untested:** the real transport's deadlines and connection failures, the browser opening, and a signed-in run of the binary ([build](docs/build.md#tests)).
+- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, and a signed-in run of the binary ([build](docs/build.md#tests)).
 - **The SDKs differ at the edges**, over an empty endpoint passed explicitly ([sdk](docs/sdk.md#defaults-and-the-environment)); Go's example never runs, and TypeScript's tests import the sources rather than the built package ([sdk](docs/sdk.md#what-the-tests-pin)).
 - **`output_format` is accepted and stored**, and no command reads it ([commands](docs/commands.md#the-configuration-file)).

@@ -218,28 +218,49 @@ pub fn refuse_cleartext(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// ⚠ Whether `url` goes straight to this machine, past any proxy the
+/// environment names. reqwest exempts no loopback host from the system's
+/// proxy variables, so a proxy would take a plain-HTTP request to this
+/// machine, bearer and all, off it in the clear: the one thing
+/// `refuse_cleartext` allows plain HTTP for. A remote proxy cannot reach this
+/// machine's ports anyway.
+pub fn bypasses_proxy(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|parsed| parsed.host_str().is_some_and(is_loopback_host))
+}
+
 /// Production implementation of `Transport` backed by `reqwest`.
 #[derive(Debug, Clone)]
 pub struct ReqwestTransport {
+    /// Every other host, through any proxy the environment names.
     client: reqwest::Client,
+    /// This machine, through none (`bypasses_proxy`).
+    direct: reqwest::Client,
 }
 
 impl ReqwestTransport {
     /// Creates a new `ReqwestTransport` with the standardized user agent.
     pub fn new() -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder()
-            .user_agent(build_user_agent())
-            // No lane answers a redirect, and following one would resend the
-            // bearer to any same-host, same-port target whatever its scheme:
-            // reqwest strips `Authorization` only when the host or the known
-            // default port changes. A 3xx is answered as the error it is.
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
+        let client = client_builder().build().context("building HTTP client")?;
+        let direct = client_builder()
+            .no_proxy()
             .build()
             .context("building HTTP client")?;
-        Ok(Self { client })
+        Ok(Self { client, direct })
     }
+}
+
+/// One builder for both clients, so they cannot drift apart on anything but
+/// the proxy.
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .user_agent(build_user_agent())
+        // No lane answers a redirect, and following one would resend the
+        // bearer to any same-host, same-port target whatever its scheme:
+        // reqwest strips `Authorization` only when the host or the known
+        // default port changes. A 3xx is answered as the error it is.
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
 }
 
 /// The one line `main` prints for a request that got no answer. The cause at
@@ -266,7 +287,12 @@ impl Transport for ReqwestTransport {
             "request"
         );
 
-        let mut builder = self.client.request(req.method, &req.url);
+        let client = if bypasses_proxy(&req.url) {
+            &self.direct
+        } else {
+            &self.client
+        };
+        let mut builder = client.request(req.method, &req.url);
         if let Some(token) = req.bearer {
             builder = builder.header("Authorization", format!("Bearer {token}"));
         }

@@ -27,11 +27,11 @@ The real transport is `reqwest`. Tests substitute a mock that answers from a que
 
 **TLS** is rustls with bundled web PKI roots, not the operating system's trust store. The CLI trusts the same roots on every machine.
 
-⚠ **Plain HTTP is refused for any host but this machine** (`refuse_cleartext`). The real transport refuses an `http://` URL before anything is sent, unless its host is `localhost`, a name under it, or a loopback address (`127.0.0.0/8`, `[::1]`).
+⚠ **Plain HTTP reaches only this machine** (`refuse_cleartext`). The real transport refuses an `http://` URL before anything is sent, unless its host is `localhost`, a name under it, or a loopback address (`127.0.0.0/8`, `[::1]`).
 - **It does not ask what the request carries.** Every lane sends a credential or is answered one: the device start sends none, and is answered the device code. Judged request by request, a login against a plain-HTTP host printed a code and opened a browser before its first poll was refused.
 - **The host is read from the parsed URL.** An IPv6 address comes in brackets, and `localhost.example.com` is not this machine.
 - So `http://localhost:3000` works, and a plain-HTTP endpoint anywhere else fails at its first request. That includes a local platform reached by another name, from inside a container for one.
-- ⚠ **A proxy still receives it.** `reqwest` honours the system's proxy variables (see [commands](commands.md#the-environment-at-the-edge)) and exempts no loopback host, so with `HTTP_PROXY` or `ALL_PROXY` set and the host not in `NO_PROXY`, a plain-HTTP request to this machine goes to the proxy in the clear, bearer and all.
+- ⚠ **No proxy carries it** (`bypasses_proxy`). `reqwest` honours the system's proxy variables (see [commands](commands.md#the-environment-at-the-edge)) and exempts no loopback host, so a proxy named there would take a plain-HTTP request to this machine off it in the clear, bearer and all. A request to this machine, by the same reading of the host, goes out on a second client built with `no_proxy()`; every other host still goes through the proxy.
 
 **The client follows no redirect.** No lane answers a 3xx, and following one would resend the bearer to any same-host, same-port target whatever its scheme: `reqwest` strips `Authorization` only when the host or the known default port changes. So a 3xx is answered as the error it is.
 
@@ -84,6 +84,6 @@ A `/v1` error never touches the credentials file. An API key's validity is the p
 
 | Concern | File |
 |---|---|
-| The seam, the real transport, the plain-HTTP refusal, error shapes | `src/transport.rs` |
+| The seam, the real transport, the plain-HTTP refusal, the proxy bypass, error shapes | `src/transport.rs` |
 | The `/v1` client | `src/client.rs` |
 | The platform's side | `telmoni/telmoni`: `web/app/cli/[...path]/route.ts` (the `/cli` door), `web/app/v1/[...path]/route.ts` (the `/v1` relay), `crates/auth/src/handler/v1.rs` |
