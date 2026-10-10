@@ -158,12 +158,13 @@ Four scaffolds that hold configuration and make no call yet, one contract betwee
 - ⚠ **An SDK takes the organization as an id.** The CLI also takes a slug, which it resolves against its cached `/cli/me`; an SDK has no session. Nothing sends the id today, since `/v1` names no organization: a key carries its own.
 - ⚠ **No SDK's configuration prints or serializes its credential.** Rust's `Config` has a hand-written `Debug` and `#[serde(skip_serializing)]` on `api_key`; Python's `api_key` is `field(repr=False)`, though `dataclasses.asdict` still carries it; Go's `APIKey` is `json:"-"`, with `String` and `GoString` on `Config` and `Client`; TypeScript's `apiKey` is not enumerable, so logging, `JSON.stringify` and a spread leave it out.
 
-Where they are not yet one, each row the same in all four when an SDK grows a client:
+They are not yet one in the rows below; when an SDK grows a client, each is answered in all four as the CLI does (`src/config.rs`: an empty or whitespace endpoint is unset, from any source):
 
 | Behaviour | Rust | TypeScript | Go | Python |
 |---|---|---|---|---|
 | An empty `TELMONI_ENDPOINT` falls back to the default | yes, whitespace too | yes | yes | yes |
 | An empty endpoint passed explicitly falls back to the default | no | yes | yes | no |
+| An empty `TELMONI_ORG` or `TELMONI_API_KEY` reads as unset | yes, whitespace too | no | yes | no |
 
 What each one's contract test pins (`sdk/rust/tests/contract.rs`, `sdk/typescript/tests/contract.test.ts`, `sdk/go/client_test.go` with `example_test.go`, `sdk/python/tests/test_contract.py`):
 
@@ -280,5 +281,5 @@ The ones that shape the design, each kept here until it is closed:
 - **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless.
 - **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor.
 - **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, and a signed-in run of the binary.
-- **The SDKs differ at the edges**, over an empty endpoint passed explicitly; Go's example never runs, and TypeScript's tests import the sources rather than the built package.
+- **The SDKs differ at the edges**, over an empty endpoint passed explicitly, a whitespace `TELMONI_ENDPOINT`, and an empty `TELMONI_ORG` or `TELMONI_API_KEY`; Go's example never runs, and TypeScript's tests import the sources rather than the built package.
 - **`output_format` is accepted and stored**, and no command reads it.
