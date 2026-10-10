@@ -1,6 +1,6 @@
 # Architecture
 
-The Telmoni CLI and its SDKs on one page: what they are for, what they are made of, how a command reaches the platform, what they keep, how they fail, and why they are built this way. Start here. Each area has a page of its own (the [index](docs/README.md#pages)), and this page restates none of them: where a rule or a number lives on an area page, this page links to it rather than copy it.
+The Telmoni CLI and its SDKs on one page: what they are for, what they are made of, how a command reaches the platform, what they keep, how they fail, and why they are built this way. It is the repository's one document on how the CLI and its SDKs are built: the detail behind each line is in the code it names, the code's comments and its tests.
 
 The platform the CLI talks to has a design of its own, `ARCHITECTURE.md` in [`telmoni/telmoni`](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md), checked out beside this repo as `../telmoni/ARCHITECTURE.md`: its `/cli` door, `/me`, `/v1` and sessions. This page covers the client.
 
@@ -12,6 +12,7 @@ The platform the CLI talks to has a design of its own, `ARCHITECTURE.md` in [`te
 - [Goals and constraints](#goals-and-constraints)
 - [Context](#context)
 - [Building blocks](#building-blocks)
+- [The SDKs](#the-sdks)
 - [Key flows](#key-flows)
 - [Data](#data)
 - [Security](#security)
@@ -29,7 +30,7 @@ The CLI, `telmoni`, is how a person or a machine uses Telmoni from a terminal. T
 - lists the person's organizations, and chooses the one it acts in;
 - keeps a configuration file: the endpoint to sign in against.
 
-It is **one Rust binary**, a thin shell over a library the tests drive directly, and a **client of the platform and of nothing else**: nothing here runs on a server, holds a database or verifies a token. Beside it, `sdk/` holds the client SDKs for Rust, TypeScript, Go and Python: scaffolds that hold configuration and make no call until the platform serves the lanes they would call ([sdk](docs/sdk.md)).
+It is **one Rust binary**, a thin shell over a library the tests drive directly, and a **client of the platform and of nothing else**: nothing here runs on a server, holds a database or verifies a token. Beside it, `sdk/` holds the client SDKs for Rust, TypeScript, Go and Python: scaffolds that hold configuration and make no call until the platform serves the lanes they would call.
 
 | For | Read |
 |---|---|
@@ -43,14 +44,14 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 
 | Goal | How |
 |---|---|
-| **It talks to one platform, and to nothing else** | One base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` names another, and nothing in `src/` or `sdk/` calls another host; plain HTTP only to a loopback endpoint; no redirect followed ([transport](docs/transport.md#the-seam)) |
-| **It works where no browser can reach it** | The device flow: the person approves a code in any browser, on any machine, and nothing listens here ([auth](docs/auth.md#the-device-flow)) |
-| **A secret is never shown** | No token, refresh token, device code or API key in output or logs, and `Debug` written by hand on every struct that holds one ([transport](docs/transport.md#what-is-never-printed)) |
-| **A crash or a blip never loses the session** | The credentials file written atomically; a 5xx or a dropped connection never deletes it; a refresh whose answer was lost asked again once ([auth](docs/auth.md#the-credentials-file), [auth](docs/auth.md#refresh)) |
-| **The platform decides when a session ends** | A 401 read by its problem type, one refresh deciding a bearer refused as expired or unknown ([auth](docs/auth.md#when-the-session-has-ended)) |
-| **What a checkout holds cannot redirect it** | The environment read only at the edge, a `.env` only in debug builds, and the configuration never from the working directory ([commands](docs/commands.md#the-environment-at-the-edge), [commands](docs/commands.md#the-configuration-file)) |
-| **Tests never touch the network or the person's files** | HTTP, sleeps, the browser and both files' paths injected ([build](docs/build.md#tests)) |
-| **A download can be checked** | A checksum beside every archive, and build provenance signed for the release workflow ([build](docs/build.md#release)) |
+| **It talks to one platform, and to nothing else** | One base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` names another, and nothing in `src/` or `sdk/` calls another host; plain HTTP only to a loopback endpoint; no redirect followed |
+| **It works where no browser can reach it** | The device flow: the person approves a code in any browser, on any machine, and nothing listens here |
+| **A secret is never shown** | No token, refresh token, device code or API key in output or logs, and `Debug` written by hand on every struct that holds one |
+| **A crash or a blip never loses the session** | The credentials file written atomically; a 5xx or a dropped connection never deletes it; a refresh whose answer was lost asked again once |
+| **The platform decides when a session ends** | A 401 read by its problem type, one refresh deciding a bearer refused as expired or unknown |
+| **What a checkout holds cannot redirect it** | The environment read only at the edge, a `.env` only in debug builds, and the configuration never from the working directory |
+| **Tests never touch the network or the person's files** | HTTP, sleeps, the browser and both files' paths injected |
+| **A download can be checked** | A checksum beside every archive, and build provenance signed for the release workflow |
 
 **What it is not, on purpose:**
 - **A server, a database or a verifier.** The platform owns the session; the CLI holds its opaque tokens.
@@ -60,8 +61,8 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 
 **What it must live with:**
 - **Nothing has shipped.** Commands, flags and both files change in place, with no migration of an older file and no deprecated alias (`AGENTS.md`).
-- **The platform's code is the contract.** A disagreement is recorded, and reported there, never worked around here ([auth](docs/auth.md#where-it-disagrees-with-the-platform)).
-- **Two platforms are built:** Apple-silicon macOS and x86_64 Linux. On Intel macOS and ARM Linux, `install.sh` points to building from source, and it refuses any other platform ([build](docs/build.md#installsh)).
+- **The platform's code is the contract.** A disagreement is recorded, and reported there, never worked around here.
+- **Two platforms are built:** Apple-silicon macOS and x86_64 Linux. On Intel macOS and ARM Linux, `install.sh` points to building from source, and it refuses any other platform.
 
 ## Context
 
@@ -92,15 +93,15 @@ flowchart LR
   Person -.->|"install.sh"| GitHub
 ```
 
-| Party | What it is to the CLI | What crosses | Page |
-|---|---|---|---|
-| **A person** | Who signs in, at a terminal, over SSH or in a container | Commands; the user code and the URL on stdout | [commands](docs/commands.md#the-commands) |
-| **A script or CI job** | Whoever holds an organization's API key | `login --key`, then `/v1` reads | [auth](docs/auth.md#api-keys) |
-| **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI | [auth](docs/auth.md#the-device-flow) |
-| **The platform's console** | The one host the CLI calls: the `/cli` door for a session, the `/v1` relay for a key | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id | [transport](docs/transport.md#what-every-request-carries) |
-| **The platform's server** | Behind the console, never called directly: it issues and ends sessions, and answers `/me` and `/v1` | Nothing directly | [the platform's identity page](https://github.com/telmoni/telmoni/blob/main/docs/identity.md#the-cli) |
-| **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct | [commands](docs/commands.md#the-environment-at-the-edge), [transport](docs/transport.md#the-seam) |
-| **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` | [build](docs/build.md#release) |
+| Party | What it is to the CLI | What crosses |
+|---|---|---|
+| **A person** | Who signs in, at a terminal, over SSH or in a container | Commands; the user code and the URL on stdout |
+| **A script or CI job** | Whoever holds an organization's API key | `login --key`, then `/v1` reads |
+| **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI |
+| **The platform's console** | The one host the CLI calls: the `/cli` door for a session, the `/v1` relay for a key | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
+| **The platform's server** | Behind the console, never called directly: it issues and ends sessions, and answers `/me` and `/v1` | Nothing directly |
+| **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct |
+| **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` |
 
 ## Building blocks
 
@@ -128,63 +129,105 @@ flowchart TB
   V1 --> T
 ```
 
-| Block | What it is | What it keeps | Page |
+| Block | What it is | What it keeps |
+|---|---|---|
+| `main.rs` | The only place that reads the environment: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1 | — |
+| `commands/` | One module per command, each handed its inputs as values | — |
+| `auth/device.rs` | The device flow, refresh, and the reading of a 401 by its type | — |
+| `auth/storage.rs` | The credentials file, read leniently and written atomically | `credentials.json` |
+| `config.rs` | The configuration file, and where the base URL comes from | `config.json` |
+| `client.rs` | The one `/v1` call, under an API key | — |
+| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes | — |
+| `sdk/` | Four configuration-only scaffolds, one per language | — |
+| `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — |
+| `install.sh` | The installer: the machine's archive, a version, the checksum | — |
+
+## The SDKs
+
+Four scaffolds that hold configuration and make no call yet, one contract between them:
+
+| SDK | Package | Configuration | Entry points |
 |---|---|---|---|
-| `main.rs` | The only place that reads the environment: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1 | — | [commands](docs/commands.md#startup) |
-| `commands/` | One module per command, each handed its inputs as values | — | [commands](docs/commands.md#the-commands) |
-| `auth/device.rs` | The device flow, refresh, and the reading of a 401 by its type | — | [auth](docs/auth.md) |
-| `auth/storage.rs` | The credentials file, read leniently and written atomically | `credentials.json` | [auth](docs/auth.md#the-credentials-file) |
-| `config.rs` | The configuration file, and where the base URL comes from | `config.json` | [commands](docs/commands.md#the-configuration-file) |
-| `client.rs` | The one `/v1` call, under an API key | — | [transport](docs/transport.md#the-v1-client) |
-| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes | — | [transport](docs/transport.md) |
-| `sdk/` | Four configuration-only scaffolds, one per language | — | [sdk](docs/sdk.md) |
-| `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — | [build](docs/build.md) |
-| `install.sh` | The installer: the machine's archive, a version, the checksum | — | [build](docs/build.md#installsh) |
+| Rust | `telmoni-sdk` (`publish = false`) | `Config { endpoint, organization_id, api_key }` | `Config::new`, `Client::new`, `from_env`, `with_config`, `config()`; `Telmoni` is an alias of `Client` |
+| TypeScript | `telmoni` | `Config { endpoint?, apiKey?, organizationId? }` | `new Telmoni(config)`, `Telmoni.fromEnv()`, the read-only `config` |
+| Go | `github.com/telmoni/telmoni-cli/sdk/go` | `Config{Endpoint, OrganizationID, APIKey}` | `DefaultConfig`, `ConfigFromEnv`, `New`, `NewFromEnv`, `Config()`; `Telmoni` is an alias |
+| Python | `telmoni` | `@dataclass Config(endpoint, organization_id, api_key)` | `Telmoni(config=None)`, `Telmoni.from_env()` |
+
+- **Dependencies:** Rust serde alone; TypeScript none at run time, built to CommonJS and ESM with type declarations by tsup; Go the standard library; Python none, with `py.typed`.
+- **Defaults and the environment.** Each defaults to the CLI's base URL, `DEFAULT_TELMONI_ENDPOINT` (`src/config.rs`), strips a trailing `/` from the endpoint, and reads `TELMONI_ENDPOINT`, `TELMONI_API_KEY` and `TELMONI_ORG`, as the CLI does, and no other variable.
+- ⚠ **An SDK takes the organization as an id.** The CLI also takes a slug, which it resolves against its cached `/cli/me`; an SDK has no session. Nothing sends the id today, since `/v1` names no organization: a key carries its own.
+- ⚠ **No SDK's configuration prints or serializes its credential.** Rust's `Config` has a hand-written `Debug` and `#[serde(skip_serializing)]` on `api_key`; Python's `api_key` is `field(repr=False)`, though `dataclasses.asdict` still carries it; Go's `APIKey` is `json:"-"`, with `String` and `GoString` on `Config` and `Client`; TypeScript's `apiKey` is not enumerable, so logging, `JSON.stringify` and a spread leave it out.
+
+Where they are not yet one, each row the same in all four when an SDK grows a client:
+
+| Behaviour | Rust | TypeScript | Go | Python |
+|---|---|---|---|---|
+| An empty `TELMONI_ENDPOINT` falls back to the default | yes, whitespace too | yes | yes | yes |
+| An empty endpoint passed explicitly falls back to the default | no | yes | yes | no |
+
+What each one's contract test pins (`sdk/rust/tests/contract.rs`, `sdk/typescript/tests/contract.test.ts`, `sdk/go/client_test.go` with `example_test.go`, `sdk/python/tests/test_contract.py`):
+
+| Pinned | Rust | TypeScript | Go | Python |
+|---|---|---|---|---|
+| The default endpoint, as the constant and as the literal URL | yes | yes | the constant only | yes |
+| A trailing `/` is stripped | yes | yes | — | yes |
+| Building from the environment gives the default | non-empty only | yes, with `TELMONI_ENDPOINT` cleared first | non-nil only | yes, with `TELMONI_ENDPOINT` cleared first |
+| The credential is never printed, and stays readable | `Debug` of `Config` and `Client` | `util.inspect` and `JSON.stringify` of the client and its `config` | `%v`, `%+v`, `%#v` of `Config` and `Client`, and `json.Marshal` | `repr` |
+
+Pinned nowhere: the variables' names and precedence, and Rust's `Serialize` leaving the credential out.
+
+**Growing a client**, once a lane exists to call:
+1. The platform serves it first, in `telmoni/telmoni`'s `V1_LANES`, which generates both its router and `contract/openapi.json`.
+2. The SDK grows a client for that lane from the platform's code; a disagreement is reported there, never worked around here.
+3. The client follows the CLI's transport rules: one base URL, a `User-Agent` naming the SDK, errors read in the platform's three shapes, no credential in any output.
+4. The four grow together: a behaviour added to one lands in all four in the same change, with its row in the tables above.
+
+They are checked by CI's `sdks` job beside the Rust gate, which covers the Rust SDK as a workspace member. Nothing is published: the Rust crate takes the workspace's version, TypeScript and Python carry their own, and Go will need tags of its own, `sdk/go/v…`, which the release workflow's `v*` does not match.
 
 ## Key flows
 
 ### Signing in
 
-`telmoni login` asks the `/cli` door for a device code, prints the user code and the URL, and opens a browser only on the endpoint's own origin. It polls at the interval the platform sets until the person approves or denies the code or it expires, then asks `/cli/me` who signed in, and saves the credentials file ([auth](docs/auth.md#the-device-flow)). `login --key` checks a key's shape and saves it, with no call ([auth](docs/auth.md#api-keys)).
+`telmoni login` asks the `/cli` door for a device code, prints the user code and the URL, and opens a browser only on the endpoint's own origin. It polls at the interval the platform sets until the person approves or denies the code or it expires, then asks `/cli/me` who signed in, and saves the credentials file. `login --key` checks a key's shape and saves it, with no call.
 
 ### A command that acts in an organization
 
-`status` and `org switch` refresh the access token when it expires within a minute, then ask `/cli/me` with the organization's id in `x-organization-id`, rewrite the cached person and organizations from the answer, and check that the platform acted in the organization they named. An organization is named by id or slug, resolved against the cache and sent as its id, and never by its label ([commands](docs/commands.md#organizations)).
+`status` and `org switch` refresh the access token when it expires within a minute, then ask `/cli/me` with the organization's id in `x-organization-id`, rewrite the cached person and organizations from the answer, and check that the platform acted in the organization they named. An organization is named by id or slug, resolved against the cache and sent as its id, and never by its label.
 
 ### Signing out
 
-`telmoni logout` refreshes if it must, then revokes the session row through the lane the console's Active sessions uses, falling back when the cached organization is one the person has left. It deletes the file whatever the answer, and says so when the platform did not confirm ([auth](docs/auth.md#signing-out)).
+`telmoni logout` refreshes if it must, then revokes the session row through the lane the console's Active sessions uses, falling back when the cached organization is one the person has left. It deletes the file whatever the answer, and says so when the platform did not confirm.
 
 ### When the platform says no
 
-A failed answer is read in the platform's three error shapes, and a 401 by its problem type. A 401 typed `unauthenticated` ends the session; `token-expired` or `invalid-token` on a call gets one refresh, whose answer decides; any other 401, a 5xx or a dropped connection ends nothing ([transport](docs/transport.md#errors), [auth](docs/auth.md#when-the-session-has-ended)).
+A failed answer is read in the platform's three error shapes, and a 401 by its problem type. A 401 typed `unauthenticated` ends the session; `token-expired` or `invalid-token` on a call gets one refresh, whose answer decides; any other 401, a 5xx or a dropped connection ends nothing.
 
 ## Data
 
 The CLI's only state is two files in the person's configuration directory, `~/Library/Application Support/telmoni/` on macOS and `~/.config/telmoni/` on Linux, and never in the working directory.
 
-| File | Holds | Written | Page |
-|---|---|---|---|
-| `credentials.json` | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`: atomically, mode `0600`, not encrypted | [auth](docs/auth.md#the-credentials-file) |
-| `config.json` | The endpoint to sign in against, and an output format no command reads yet | By `config set`, a plain write: it holds no secret | [commands](docs/commands.md#the-configuration-file) |
+| File | Holds | Written |
+|---|---|---|
+| `credentials.json` | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`: atomically, mode `0600`, not encrypted |
+| `config.json` | The endpoint to sign in against, and an output format no command reads yet | By `config set`, a plain write: it holds no secret |
 
 A file that cannot be read or parsed reads as signed out, or as the default configuration, with a note that never quotes it, and a missing one silently. The `config` commands alone fail on a `config.json` that does not parse.
 
 ## Security
 
-- **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin ([transport](docs/transport.md#the-seam), [auth](docs/auth.md#the-device-flow)).
-- **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy ([transport](docs/transport.md#the-seam)).
-- **Every request has a deadline**, set past the console's own wait on the server, so a stalled host fails in seconds ([transport](docs/transport.md#the-seam)).
-- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, and a credentials file that does not parse is logged under `-v` by line and column, never by its contents ([transport](docs/transport.md#what-is-never-printed)).
-- **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory ([commands](docs/commands.md#the-environment-at-the-edge)).
-- **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow ([build](docs/build.md#lints-and-policy), [build](docs/build.md#release)).
+- **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin.
+- **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy.
+- **Every request has a deadline**, set past the console's own wait on the server, so a stalled host fails in seconds.
+- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, and a credentials file that does not parse is logged under `-v` by line and column, never by its contents.
+- **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory.
+- **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow.
 
 ## Distribution
 
-- **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on both shipped platforms ([build](docs/build.md#the-gate)).
-- **A release** is an annotated `v*` tag matching the workspace's version: each platform built natively, the archives and `install.sh` attested, and a GitHub release made from the tag ([build](docs/build.md#release)).
-- **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one ([build](docs/build.md#installsh)).
-- **The SDKs are not released.** The Rust crate takes the workspace's version, TypeScript and Python carry their own, and Go will need tags of its own, `sdk/go/v…` ([sdk](docs/sdk.md#versions-and-publishing)).
+- **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on both shipped platforms.
+- **A release** is an annotated `v*` tag matching the workspace's version: each platform built natively, the archives and `install.sh` attested, and a GitHub release made from the tag.
+- **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one.
+- **The SDKs are not released** (*The SDKs*).
 
 ## When something fails
 
@@ -204,38 +247,38 @@ A file that cannot be read or parsed reads as signed out, or as the default conf
 
 ## What comes next
 
-- **The SDKs grow clients together**, once the platform serves the lanes they would call, on the CLI's transport rules: one base URL, a `User-Agent` naming the SDK, the platform's error shapes, no credential in any output ([sdk](docs/sdk.md#growing-a-client)).
+- **The SDKs grow clients together**, once the platform serves the lanes they would call (*The SDKs*, "Growing a client").
 - **A command that touches customer data** comes after its lane in the platform: `/cli` for a signed-in person, `/v1` for an API key (`AGENTS.md`).
 - **The platform plans a host for machines**, apart from its console, and the console's `/v1` and `/cli` relays go with it ([the platform's design](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md#where-it-goes-next)). Those are the lanes the CLI calls.
 
 ## Decisions
 
-| Decision | Why | What it gives up | Page |
-|---|---|---|---|
-| **The device flow, not a loopback redirect** | The CLI runs over SSH, in containers and on hosts with no browser | The person types a code | [auth](docs/auth.md#the-device-flow) |
-| **One base URL, through the console's doors** | One address to configure, and the CLI never needs the server's | Every request takes the console's hop | [transport](docs/transport.md) |
-| **The platform's opaque tokens, the platform deciding** | No token is verified here, so nothing here can be wrong about one | A request to learn whether a session lives | [auth](docs/auth.md) |
-| **A 401 read by its type, one refresh deciding** | A blip, a botched secret rotation or a proxy cannot sign every CLI out | The rules follow the platform's problem types, held in step by hand | [auth](docs/auth.md#when-the-session-has-ended) |
-| **One retry of a refresh with no answer** | The platform rotates the refresh token on use, and a spent one presented late ends the session | A second request when the first answer was lost | [auth](docs/auth.md#refresh) |
-| **The credentials file: `0600`, unencrypted, written atomically** | It runs over SSH, in containers and on CI runners, so it keeps no state beyond this one file, and a crash leaves the previous file whole | Whoever can read the person's files can read the tokens | [auth](docs/auth.md#the-credentials-file) |
-| **The environment at the edge, a `.env` in debug builds only** | A released binary run in somebody else's checkout cannot take its endpoint or key | A `.env` does nothing for a released binary | [commands](docs/commands.md#the-environment-at-the-edge) |
-| **Organizations by id or slug, never by label** | A label is neither unique nor stable, and a wrong guess acts in another organization | People type a slug, not a name | [commands](docs/commands.md#organizations) |
-| **No redirect followed, and plain HTTP only to a loopback endpoint** | A bearer must neither follow a redirect nor cross a network in the clear | A platform behind a redirect, or plain HTTP to another host, does not work | [transport](docs/transport.md#the-seam) |
-| **This machine past any proxy** | A proxy would carry plain HTTP to this machine off it in the clear, and a remote one cannot reach its ports | A proxy set up to watch local traffic sees none of the CLI's | [transport](docs/transport.md#the-seam) |
-| **rustls with bundled roots** | The same trust on every machine | A root added to the system's store is not trusted | [transport](docs/transport.md#the-seam) |
-| **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` | [transport](docs/transport.md#what-is-never-printed) |
-| **SDKs configuration-only, growing together** | A client ahead of its contract freezes a guess, and a language that lags is a customer who cannot start | No SDK call works today | [sdk](docs/sdk.md) |
-| **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The SDKs' checks and the workflow lint are CI jobs beside it, outside the gate | [build](docs/build.md#the-gate) |
-| **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | Two platforms; checking provenance needs `gh` | [build](docs/build.md#release) |
+| Decision | Why | What it gives up |
+|---|---|---|
+| **The device flow, not a loopback redirect** | The CLI runs over SSH, in containers and on hosts with no browser | The person types a code |
+| **One base URL, through the console's doors** | One address to configure, and the CLI never needs the server's | Every request takes the console's hop |
+| **The platform's opaque tokens, the platform deciding** | No token is verified here, so nothing here can be wrong about one | A request to learn whether a session lives |
+| **A 401 read by its type, one refresh deciding** | A blip, a botched secret rotation or a proxy cannot sign every CLI out | The rules follow the platform's problem types, held in step by hand |
+| **One retry of a refresh with no answer** | The platform rotates the refresh token on use, and a spent one presented late ends the session | A second request when the first answer was lost |
+| **The credentials file: `0600`, unencrypted, written atomically** | It runs over SSH, in containers and on CI runners, so it keeps no state beyond this one file, and a crash leaves the previous file whole | Whoever can read the person's files can read the tokens |
+| **The environment at the edge, a `.env` in debug builds only** | A released binary run in somebody else's checkout cannot take its endpoint or key | A `.env` does nothing for a released binary |
+| **Organizations by id or slug, never by label** | A label is neither unique nor stable, and a wrong guess acts in another organization | People type a slug, not a name; and a slug typed with a capital letter, which the console accepts, is unknown here |
+| **No redirect followed, and plain HTTP only to a loopback endpoint** | A bearer must neither follow a redirect nor cross a network in the clear | A platform behind a redirect, or plain HTTP to another host, does not work |
+| **This machine past any proxy** | A proxy would carry plain HTTP to this machine off it in the clear, and a remote one cannot reach its ports | A proxy set up to watch local traffic sees none of the CLI's |
+| **rustls with bundled roots** | The same trust on every machine | A root added to the system's store is not trusted |
+| **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` |
+| **SDKs configuration-only, growing together** | A client ahead of its contract freezes a guess, and a language that lags is a customer who cannot start | No SDK call works today |
+| **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The SDKs' checks and the workflow lint are CI jobs beside it, outside the gate |
+| **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | Two platforms; checking provenance needs `gh` |
 
 ## Known gaps
 
-The ones that shape the design, each kept on its page until it is closed:
-- **Two CLI processes writing at once** are not locked against each other: the last rename wins ([auth](docs/auth.md#the-credentials-file)).
-- **Signing in again** leaves the earlier session live, under Active sessions, until it ends there ([auth](docs/auth.md#the-device-flow)).
-- **`install.sh` checks the checksum, not the provenance**, since checking it needs `gh` ([build](docs/build.md#installsh)).
-- **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless ([auth](docs/auth.md#where-it-disagrees-with-the-platform)).
-- **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor ([docs](docs/README.md#keeping-these-pages-true)).
-- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, and a signed-in run of the binary ([build](docs/build.md#tests)).
-- **The SDKs differ at the edges**, over an empty endpoint passed explicitly ([sdk](docs/sdk.md#defaults-and-the-environment)); Go's example never runs, and TypeScript's tests import the sources rather than the built package ([sdk](docs/sdk.md#what-the-tests-pin)).
-- **`output_format` is accepted and stored**, and no command reads it ([commands](docs/commands.md#the-configuration-file)).
+The ones that shape the design, each kept here until it is closed:
+- **Two CLI processes writing at once** are not locked against each other: the last rename wins.
+- **Signing in again** leaves the earlier session live, under Active sessions, until it ends there.
+- **`install.sh` checks the checksum, not the provenance**, since checking it needs `gh`.
+- **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless.
+- **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor.
+- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, and a signed-in run of the binary.
+- **The SDKs differ at the edges**, over an empty endpoint passed explicitly; Go's example never runs, and TypeScript's tests import the sources rather than the built package.
+- **`output_format` is accepted and stored**, and no command reads it.

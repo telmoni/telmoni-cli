@@ -48,8 +48,7 @@ sdk/            the SDK scaffolds: typescript/, python/, go/, rust/
 tests/          mock-based suites, no network
 xtask/          the gate (`cargo xtask ci`) and release packaging (`cargo xtask dist`)
 install.sh      the installer: this machine's archive from a release, checked against SHA256SUMS
-docs/           how it is built, and why, one page per area
-ARCHITECTURE.md the whole of it on one page, linking down to docs/
+ARCHITECTURE.md how it is built, and why, on one page
 ```
 
 ## Contributing

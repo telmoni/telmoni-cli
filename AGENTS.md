@@ -15,8 +15,7 @@ The `telmoni` command-line client and client SDK scaffolds ([`telmoni/telmoni-cl
 | `sdk/` | SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`): configuration structs, no HTTP. |
 | `tests/` | Mock-based suites: no network, no sleeps. |
 | `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
-| `ARCHITECTURE.md` | The CLI and its SDKs on one page, linking down to `docs/`. |
-| `docs/` | How the CLI and SDKs are built, one page per area; `README.md` there is the index. |
+| `ARCHITECTURE.md` | How the CLI and its SDKs are built, and why, on one page: the repository's one internal document, the SDKs' contract and parity tables (*The SDKs*) among it. |
 | [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform, the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI and SDK pages among them. |
 
 ## Commands
@@ -39,7 +38,7 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - **Labels and slugs:** an organization's label is its trimmed `name`; never `ownerEmail`. Its slug is set when it is created: the URL its owner chose, else one derived from its name when that is free, else a placeholder (`org-` and ten random characters); after that only a change to its URL in the console's Settings moves it, never a rename.
 - **API keys** start with `telmoni_` and open only `{endpoint}/v1`, never `/cli`; every `/v1` lane is a read today.
 - **Credentials** live in `dirs::config_dir()/telmoni/credentials.json`, mode `0600`, unencrypted.
-- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one credentials file, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines. The SDKs stay configuration-only until their contract exists, and grow together: a behaviour added to one lands in all four in the same change (`docs/sdk.md`).
+- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one credentials file, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines. The SDKs stay configuration-only until their contract exists, and grow together: a behaviour added to one lands in all four in the same change, with its row in `ARCHITECTURE.md`'s parity tables (*The SDKs*).
 
 ## Agent Hygiene
 - **This repo only:** change nothing in another repository (`telmoni/telmoni`, any other) unless the user says so for this task; that binds subagents too. Reading is fine.
@@ -57,5 +56,6 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 ## Definition of Done
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
+- [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
 - [ ] A change a user can see names the customer pages it leaves wrong (`api/cli.mdx`, `api/sdks.mdx`, under `web/content/docs` in `telmoni/telmoni`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).
