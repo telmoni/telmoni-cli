@@ -7,9 +7,9 @@ use std::io::IsTerminal;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
 
-use telmoni_cli::auth::CredentialsStore;
+use telmoni_cli::auth::{CredentialsStore, run_helper, supplied_key};
 use telmoni_cli::commands::{config_cmd, login, logout, org, status};
-use telmoni_cli::config::{Config, load_config};
+use telmoni_cli::config::{Config, load_config, resolve_endpoint};
 use telmoni_cli::transport::ReqwestTransport;
 
 #[derive(Parser)]
@@ -78,7 +78,7 @@ async fn main() {
         std::process::exit(1);
     };
     let telmoni_dir = config_dir.join("telmoni");
-    let store = CredentialsStore::new(telmoni_dir.join("credentials.json"));
+    let store = CredentialsStore::system(telmoni_dir.join("credentials.json"));
     let config_path = telmoni_dir.join("config.json");
 
     let transport = match ReqwestTransport::new() {
@@ -100,18 +100,27 @@ async fn main() {
     // function takes values and can be tested without touching it.
     let telmoni_org_env = env_var("TELMONI_ORG");
     let endpoint_env = env_var("TELMONI_ENDPOINT");
+    let api_key_env = env_var("TELMONI_API_KEY");
+
+    // These manage the saved login, which a command acting with a key does
+    // not read while the variable is set; said once, so a person who signs
+    // in or out is not surprised by what `status` shows next.
+    if api_key_env.is_some() && matches!(cli.cmd, Cmd::Login(_) | Cmd::Logout(_) | Cmd::Org(_)) {
+        eprintln!(
+            "note: TELMONI_API_KEY is set, and commands that act with a key use it before the \
+             saved login"
+        );
+    }
 
     let res = match cli.cmd {
-        Cmd::Login(mut args) => {
-            if args.key.is_none() {
-                args.key = dotenv_var("TELMONI_API_KEY");
-            }
+        Cmd::Login(args) => {
             login::execute(
                 args,
                 &transport,
                 &store,
                 &config,
                 endpoint_env,
+                read_piped_key,
                 |url| open::that(url),
                 tokio::time::sleep,
             )
@@ -119,15 +128,24 @@ async fn main() {
         }
         Cmd::Logout(args) => logout::execute(args, &transport, &store, telmoni_org_env).await,
         Cmd::Status(args) | Cmd::Whoami(args) => {
-            status::execute(
-                args,
-                &transport,
-                &store,
-                &config,
-                telmoni_org_env,
-                endpoint_env,
-            )
-            .await
+            match supplied_key(api_key_env, config.api_key_helper.as_deref(), run_helper).await {
+                Ok(Some(key)) => {
+                    let endpoint = resolve_endpoint(None, endpoint_env.as_deref(), &config);
+                    status::execute_with_key(args, &transport, &key, &endpoint).await
+                }
+                Ok(None) => {
+                    status::execute(
+                        args,
+                        &transport,
+                        &store,
+                        &config,
+                        telmoni_org_env,
+                        endpoint_env,
+                    )
+                    .await
+                }
+                Err(err) => Err(err),
+            }
         }
         Cmd::Org(cmd) => org::execute(cmd, &transport, &store).await,
         Cmd::Config(args) => config_cmd::execute(args, &config_path),
@@ -137,6 +155,26 @@ async fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
+}
+
+/// The key `login --with-key` saves, from standard input. A terminal is
+/// refused: a key typed there is echoed onto the screen.
+fn read_piped_key() -> anyhow::Result<String> {
+    use std::io::Read;
+
+    /// Longer than any API key: what is past it is not one.
+    const LONGEST: u64 = 4096;
+
+    let stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        anyhow::bail!("pipe the key in: telmoni login --with-key < key.txt");
+    }
+    let mut key = String::new();
+    stdin.lock().take(LONGEST + 1).read_to_string(&mut key)?;
+    if key.len() as u64 > LONGEST {
+        anyhow::bail!("standard input holds more than an API key");
+    }
+    Ok(key)
 }
 
 /// A non-blank variable from the environment, else from `.env` in a debug build.

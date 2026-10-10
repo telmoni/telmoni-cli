@@ -1047,6 +1047,7 @@ fn test_endpoint_precedence() {
     let config = Config {
         endpoint: Some("https://from-config.example/".to_string()),
         output_format: None,
+        api_key_helper: None,
     };
     assert_eq!(
         resolve_endpoint(
@@ -1123,10 +1124,11 @@ async fn test_api_key_login_and_status() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    // Login with API key - no network call, no browser, no waiting
+    // Login with API key - no network call, no browser, no waiting; the key
+    // arrives on standard input with the newline `echo` gives it
     login::execute(
         login::LoginArgs {
-            key: Some("telmoni_test_api_key".to_string()),
+            with_key: true,
             endpoint: Some("https://telmoni.com".to_string()),
             no_browser: false,
         },
@@ -1134,6 +1136,7 @@ async fn test_api_key_login_and_status() {
         &store,
         &config,
         None,
+        || Ok("telmoni_test_api_key\n".to_string()),
         |_: &str| -> std::io::Result<()> { panic!("an API key login opens no browser") },
         |_| async { panic!("an API key login does not poll") },
     )
@@ -2450,7 +2453,7 @@ async fn test_slug_moved_since_cached() {
 #[test]
 fn test_debug_never_prints_a_secret() {
     use telmoni_cli::auth::device::DeviceStart;
-    use telmoni_cli::commands::login::LoginArgs;
+    use telmoni_cli::auth::{KeySource, SuppliedKey};
 
     let mut device = device_creds(&["org_1"], "org_1");
     device.access_token = Some("secret_access".to_string());
@@ -2478,10 +2481,9 @@ fn test_debug_never_prints_a_secret() {
         )
         .unwrap(),
     );
-    let args = LoginArgs {
-        key: Some("telmoni_secret_key".to_string()),
-        endpoint: None,
-        no_browser: true,
+    let supplied = SuppliedKey {
+        key: "telmoni_secret_key".to_string(),
+        source: KeySource::Environment,
     };
 
     let printed = [
@@ -2491,7 +2493,7 @@ fn test_debug_never_prints_a_secret() {
         format!("{answer:?}"),
         format!("{start:?}"),
         format!("{granted:?}"),
-        format!("{args:?}"),
+        format!("{supplied:?}"),
     ];
     for out in &printed {
         for secret in [
@@ -2834,7 +2836,7 @@ async fn device_login(transport: &MockTransport, store: &CredentialsStore) -> an
 
     login::execute(
         login::LoginArgs {
-            key: None,
+            with_key: false,
             endpoint: Some("https://telmoni.com".to_string()),
             no_browser: true,
         },
@@ -2842,6 +2844,7 @@ async fn device_login(transport: &MockTransport, store: &CredentialsStore) -> an
         store,
         &Config::default(),
         None,
+        || Err(anyhow::anyhow!("a device login reads no key")),
         |_: &str| Ok(()),
         |_| async {},
     )
@@ -2870,7 +2873,7 @@ async fn test_interactive_login() {
 
     login::execute(
         login::LoginArgs {
-            key: None,
+            with_key: false,
             endpoint: Some("https://telmoni.com".to_string()),
             no_browser: false,
         },
@@ -2878,6 +2881,7 @@ async fn test_interactive_login() {
         &store,
         &Config::default(),
         None,
+        || panic!("a device login reads no key"),
         |url: &str| {
             opened.lock().unwrap().push(url.to_string());
             Ok(())
@@ -2959,7 +2963,7 @@ async fn test_interactive_login_without_a_browser() {
     transport.push_answer(200, ME_IN_ORG_1);
     login::execute(
         login::LoginArgs {
-            key: None,
+            with_key: false,
             endpoint: Some("https://telmoni.com".to_string()),
             no_browser: false,
         },
@@ -2967,6 +2971,7 @@ async fn test_interactive_login_without_a_browser() {
         &store,
         &Config::default(),
         None,
+        || panic!("a device login reads no key"),
         |_: &str| Err(std::io::Error::other("no display")),
         |dur| {
             let slept = slept.clone();
@@ -2983,7 +2988,7 @@ async fn test_interactive_login_without_a_browser() {
     transport.push_answer(200, ME_IN_ORG_1);
     login::execute(
         login::LoginArgs {
-            key: None,
+            with_key: false,
             endpoint: Some("https://telmoni.com".to_string()),
             no_browser: true,
         },
@@ -2991,6 +2996,7 @@ async fn test_interactive_login_without_a_browser() {
         &store,
         &Config::default(),
         None,
+        || panic!("a device login reads no key"),
         |_: &str| -> std::io::Result<()> { panic!("--no-browser opens no browser") },
         |_| async {},
     )
@@ -3083,4 +3089,131 @@ fn test_configuration_file() {
     assert!(err.to_string().starts_with("parsing config file"), "{err}");
 
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// 33. A key supplied for one command: TELMONI_API_KEY first, and the helper
+//     only when it is unset; the key is trimmed, one that is not an API key
+//     is refused by where it came from, never by its value, and with neither
+//     the saved login stands
+#[tokio::test]
+async fn test_a_supplied_key_and_where_it_came_from() {
+    use telmoni_cli::auth::{KeySource, supplied_key};
+
+    let never = |_: String| async { panic!("the helper runs only without TELMONI_API_KEY") };
+    let key = supplied_key(
+        Some("telmoni_env_key".to_string()),
+        Some("printf ignored"),
+        never,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(key.key, "telmoni_env_key");
+    assert_eq!(key.source, KeySource::Environment);
+
+    let ran = Arc::new(Mutex::new(Vec::<String>::new()));
+    let helper = |command: String| {
+        let ran = ran.clone();
+        async move {
+            ran.lock().unwrap().push(command);
+            Ok("telmoni_helper_key\n".to_string())
+        }
+    };
+    let key = supplied_key(None, Some("  op read op://vault/telmoni  "), helper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(key.key, "telmoni_helper_key");
+    assert_eq!(key.source, KeySource::Helper);
+    assert_eq!(*ran.lock().unwrap(), ["op read op://vault/telmoni"]);
+
+    let unused = |_: String| async { panic!("no helper is configured") };
+    assert!(supplied_key(None, None, unused).await.unwrap().is_none());
+    let unused = |_: String| async { panic!("a blank helper is no helper") };
+    assert!(
+        supplied_key(None, Some("   "), unused)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let unused = |_: String| async { panic!("TELMONI_API_KEY is set") };
+    let err = supplied_key(Some("sk_live_secret".to_string()), None, unused)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.starts_with("TELMONI_API_KEY gives no API key"), "{err}");
+    assert!(!err.contains("sk_live_secret"), "{err}");
+
+    let printed = |_: String| async { Ok("telmoni_two words".to_string()) };
+    let err = supplied_key(None, Some("helper"), printed)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.starts_with("api_key_helper gives no API key"), "{err}");
+    assert!(!err.contains("two words"), "{err}");
+}
+
+// 34. The helper through the shell: what it prints is the key; a failing
+//     exit, or nothing printed, is an error that shows no output
+#[cfg(unix)]
+#[tokio::test]
+async fn test_the_helper_runs_through_the_shell() {
+    use telmoni_cli::auth::run_helper;
+
+    assert_eq!(
+        run_helper("printf 'telmoni_from_helper\\n'".to_string())
+            .await
+            .unwrap(),
+        "telmoni_from_helper\n"
+    );
+
+    let err = run_helper("printf telmoni_unseen; exit 3".to_string())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.starts_with("api_key_helper failed"), "{err}");
+    assert!(!err.contains("telmoni_unseen"), "{err}");
+
+    let err = run_helper("true".to_string())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(err, "api_key_helper printed nothing");
+}
+
+// 35. status with a supplied key asks /v1 with that key, at the endpoint it
+//     is given, and leaves the saved login alone: none is read or written
+#[tokio::test]
+async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
+    use telmoni_cli::auth::{KeySource, SuppliedKey};
+    use telmoni_cli::commands::status;
+
+    let store = temp_store();
+    let saved = device_creds(&["org_1"], "org_1");
+    store.save(&saved).unwrap();
+    let transport = MockTransport::new();
+    transport.push_answer(
+        200,
+        r#"{ "organization_id": "org_key", "slug": "key-org", "name": "Key Org", "owner": null }"#,
+    );
+    let key = SuppliedKey {
+        key: "telmoni_supplied".to_string(),
+        source: KeySource::Environment,
+    };
+
+    status::execute_with_key(
+        status::StatusArgs { json: false },
+        &transport,
+        &key,
+        "https://env.example",
+    )
+    .await
+    .unwrap();
+
+    let reqs = transport.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].url, "https://env.example/v1/organization");
+    assert_eq!(reqs[0].bearer.as_deref(), Some("telmoni_supplied"));
+    assert_eq!(store.load().unwrap(), Some(saved));
 }

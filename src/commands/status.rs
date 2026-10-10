@@ -5,6 +5,7 @@ use clap::Args;
 use serde_json::json;
 
 use crate::auth::device::{fetch_me_for_session, refresh_if_needed};
+use crate::auth::key::SuppliedKey;
 use crate::auth::storage::{AuthType, Credentials, CredentialsStore, print_active_organization};
 use crate::client::fetch_v1_organization;
 use crate::config::Config;
@@ -35,33 +36,52 @@ pub async fn execute(
             let endpoint = crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config);
             println!("Endpoint: {endpoint}");
         }
-        bail!("Not signed in. Run telmoni login, or telmoni login --key <API key>.");
+        bail!("Not signed in. Run telmoni login, or set TELMONI_API_KEY.");
     };
 
     match creds.auth_type {
-        AuthType::ApiKey => execute_api_key(args, transport, &creds).await,
+        AuthType::ApiKey => {
+            let api_key = creds
+                .api_key
+                .as_deref()
+                .context("missing api key in credentials")?;
+            report_api_key(args, transport, &creds.endpoint, api_key, None).await
+        }
         AuthType::Device => {
             execute_device(args, transport, store, &mut creds, telmoni_org_env).await
         }
     }
 }
 
-async fn execute_api_key(
+/// Executes `status` for a key supplied for this command alone, at
+/// `endpoint` (the flag-less one: `TELMONI_ENDPOINT`, the configuration
+/// file, the default). The saved login is neither read nor written: the
+/// key stands in for it.
+pub async fn execute_with_key(
     args: StatusArgs,
     transport: &impl Transport,
-    creds: &Credentials,
+    key: &SuppliedKey,
+    endpoint: &str,
 ) -> Result<()> {
-    let api_key = creds
-        .api_key
-        .as_deref()
-        .context("missing api key in credentials")?;
+    report_api_key(args, transport, endpoint, &key.key, Some(key)).await
+}
 
-    let org = fetch_v1_organization(transport, &creds.endpoint, api_key).await?;
+/// What an API key opens, asked of `/v1`; `supplied` is the key's origin
+/// when it is not the saved login's.
+async fn report_api_key(
+    args: StatusArgs,
+    transport: &impl Transport,
+    endpoint: &str,
+    api_key: &str,
+    supplied: Option<&SuppliedKey>,
+) -> Result<()> {
+    let org = fetch_v1_organization(transport, endpoint, api_key).await?;
 
     if args.json {
         let out = json!({
             "authType": "api_key",
-            "endpoint": creds.endpoint,
+            "keySource": supplied.map_or("saved", |k| k.source.as_str()),
+            "endpoint": endpoint,
             "organization": {
                 "organizationId": org.organization_id,
                 "slug": org.slug,
@@ -70,8 +90,16 @@ async fn execute_api_key(
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        println!("API key for {} ({})", org.organization_id, org.label());
-        println!("Endpoint: {}", creds.endpoint);
+        match supplied {
+            Some(key) => println!(
+                "API key from {} for {} ({})",
+                key.source.name(),
+                org.organization_id,
+                org.label()
+            ),
+            None => println!("API key for {} ({})", org.organization_id, org.label()),
+        }
+        println!("Endpoint: {endpoint}");
     }
     Ok(())
 }

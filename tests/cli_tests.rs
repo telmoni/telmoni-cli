@@ -51,21 +51,72 @@ impl Sandbox {
         }
     }
 
-    /// `telmoni <args>` with `HOME` and `env` as its whole environment.
+    /// `telmoni <args>` with `HOME` and `env` as its whole environment, and
+    /// nothing on standard input.
     #[expect(
         clippy::unwrap_used,
         reason = "test scaffolding: a binary that cannot be run fails the test"
     )]
     fn run(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_telmoni"))
+        self.command(args, env).output().unwrap()
+    }
+
+    /// [`Sandbox::run`] with `input` piped to standard input.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "test scaffolding: a binary that cannot be run fails the test"
+    )]
+    fn run_with_input(&self, args: &[&str], env: &[(&str, &str)], input: &str) -> Output {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut child = self
+            .command(args, env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+
+    fn command(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_telmoni"));
+        command
             .args(args)
             .current_dir(self.work())
             .env_clear()
             .env("HOME", self.home())
-            .envs(env.iter().copied())
-            .output()
-            .unwrap()
+            .envs(env.iter().copied());
+        command
     }
+}
+
+/// Whether the macOS Keychain holds the item the binary keeps the
+/// credentials file at `path` under: a sandbox's home names an item of its
+/// own, so this never reads a person's login.
+#[cfg(target_os = "macos")]
+fn in_keychain(path: &std::path::Path) -> bool {
+    Command::new("/usr/bin/security")
+        .args(["find-generic-password", "-s", "telmoni", "-a"])
+        .arg(path)
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
+/// Whether the saved login is anywhere the binary keeps one.
+fn saved(path: &std::path::Path) -> bool {
+    #[cfg(target_os = "macos")]
+    if in_keychain(path) {
+        return true;
+    }
+    path.exists()
 }
 
 impl Drop for Sandbox {
@@ -126,7 +177,7 @@ fn configuration_file_through_the_binary() {
 
     let out = sandbox.run(&["config", "list"], &[]);
     assert!(
-        stdout(&out).contains("endpoint:      https://config.example"),
+        stdout(&out).contains("endpoint:       https://config.example"),
         "{}",
         stdout(&out)
     );
@@ -179,9 +230,10 @@ fn dotenv_only_in_a_debug_build() {
     assert_eq!(stdout(&out), "Endpoint: https://env.example\n");
 }
 
-// An API key signs in without a request and is kept in the configuration
-// directory, private. `org` refuses it, and logout deletes it, again without
-// a request. -v logs to stderr, and nothing anywhere prints the key.
+// An API key piped to `login --with-key` signs in without a request and is
+// saved: in a Mac's Keychain, else in the configuration directory, private.
+// `org` refuses it, and logout deletes it, again without a request. -v logs
+// to stderr, and nothing anywhere prints the key.
 #[test]
 fn api_key_sign_in_and_out() {
     let sandbox = Sandbox::new();
@@ -190,25 +242,30 @@ fn api_key_sign_in_and_out() {
     let creds = sandbox.telmoni_dir().join("credentials.json");
     let mut outputs = Vec::new();
 
-    let out = sandbox.run(&["login", "--key", "not-a-key"], &env);
+    let out = sandbox.run_with_input(&["login", "--with-key"], &env, "not-a-key\n");
     assert_eq!(out.status.code(), Some(1));
     assert!(
         stderr(&out).contains("an API key starts with telmoni_"),
         "{}",
         stderr(&out)
     );
-    assert!(!creds.exists());
+    assert!(!saved(&creds));
 
-    let out = sandbox.run(&["-v", "login", "--key", "telmoni_secret_key"], &env);
+    // Nothing piped is no key either.
+    let out = sandbox.run(&["login", "--with-key"], &env);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!saved(&creds));
+
+    let out = sandbox.run_with_input(&["-v", "login", "--with-key"], &env, "telmoni_secret_key\n");
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
         "Signed in with API key\nEndpoint: http://127.0.0.1:9\n"
     );
     assert!(stderr(&out).contains("DEBUG"), "{}", stderr(&out));
-    assert!(creds.exists());
+    assert!(saved(&creds));
     #[cfg(unix)]
-    {
+    if creds.exists() {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&creds).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
@@ -227,11 +284,79 @@ fn api_key_sign_in_and_out() {
     let out = sandbox.run(&["-v", "logout"], &env);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "Signed out\n");
-    assert!(!creds.exists());
+    assert!(!saved(&creds));
     outputs.push(out);
 
     for out in &outputs {
         assert!(!stdout(out).contains("telmoni_secret_key"));
         assert!(!stderr(out).contains("telmoni_secret_key"));
     }
+}
+
+// TELMONI_API_KEY stands in for the saved login, and so does the helper when
+// it is unset: a blank variable is none, one that is not an API key is
+// refused by name, never echoed, and so is a helper that fails, all before
+// any request. The commands that manage the saved login say the variable
+// outranks it. Nothing is saved.
+#[test]
+fn a_key_for_one_command() {
+    let sandbox = Sandbox::new();
+    let creds = sandbox.telmoni_dir().join("credentials.json");
+    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+
+    let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_API_KEY", "  ")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("Not signed in. Run telmoni login, or set TELMONI_API_KEY."),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run(
+        &["status"],
+        &[endpoint, ("TELMONI_API_KEY", "sk_live_wrong")],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("TELMONI_API_KEY gives no API key"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("sk_live_wrong"), "{}", stderr(&out));
+
+    // A key in the variable is used at once: the refused connection, not
+    // "Not signed in", is what stops it.
+    let out = sandbox.run(
+        &["status"],
+        &[endpoint, ("TELMONI_API_KEY", "telmoni_from_env")],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("telmoni_from_env"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run(&["config", "set", "api_key_helper", "exit 4"], &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = sandbox.run(&["status"], &[endpoint]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("api_key_helper failed"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run(
+        &["logout"],
+        &[endpoint, ("TELMONI_API_KEY", "telmoni_from_env")],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("note: TELMONI_API_KEY is set"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!saved(&creds));
 }

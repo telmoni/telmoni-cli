@@ -9,17 +9,18 @@ use clap::Args;
 use crate::auth::device::{fetch_me, poll_once, poll_until_granted, start_device_auth};
 use crate::auth::storage::{Credentials, CredentialsStore, print_active_organization};
 use crate::config::{Config, resolve_endpoint};
-use crate::transport::{REDACTED, Transport};
+use crate::transport::Transport;
 
 /// Arguments for `telmoni login`.
-#[derive(Args)]
+#[derive(Debug, Args)]
 pub struct LoginArgs {
-    /// Authenticate non-interactively using an API key.
-    // clap's help prints an `env` argument's current value beside its name;
-    // hidden, so `telmoni login --help` on a host that exports the key does
-    // not write the key to the terminal or a CI log.
-    #[arg(long, env = "TELMONI_API_KEY", hide_env_values = true)]
-    pub key: Option<String>,
+    /// Save an API key read from standard input, for scripts and servers:
+    /// `telmoni login --with-key < key.txt`.
+    // Never the key itself as an argument: that reaches `ps`, shell history
+    // and CI logs. A run that needs a key without saving one sets
+    // `TELMONI_API_KEY` instead.
+    #[arg(long, conflicts_with = "no_browser")]
+    pub with_key: bool,
 
     /// Target Telmoni endpoint URL (e.g. `https://telmoni.com`).
     #[arg(long, env = "TELMONI_ENDPOINT")]
@@ -28,22 +29,6 @@ pub struct LoginArgs {
     /// Do not automatically open the browser.
     #[arg(long)]
     pub no_browser: bool,
-}
-
-/// ⚠ By hand: `key` is the API key.
-impl std::fmt::Debug for LoginArgs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            key,
-            endpoint,
-            no_browser,
-        } = self;
-        f.debug_struct("LoginArgs")
-            .field("key", &key.as_ref().map(|_| REDACTED))
-            .field("endpoint", endpoint)
-            .field("no_browser", no_browser)
-            .finish()
-    }
 }
 
 /// Validates that an API key starts with `telmoni_`, has a non-empty payload, and contains no whitespace.
@@ -72,26 +57,33 @@ pub fn same_origin(candidate: &str, endpoint: &str) -> bool {
 }
 
 /// Executes the `telmoni login` flow. `endpoint_env` is `TELMONI_ENDPOINT`
-/// as `main` read it. The browser and the wait between polls are passed in,
-/// like the transport, so a test runs the whole flow without either.
-pub async fn execute<B, S, SF>(
+/// as `main` read it. Standard input, the browser and the wait between polls
+/// are passed in, like the transport, so a test runs the whole flow without
+/// any of them.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each seam a test replaces is a parameter, as the transport is"
+)]
+pub async fn execute<K, B, S, SF>(
     args: LoginArgs,
     transport: &impl Transport,
     store: &CredentialsStore,
     config: &Config,
     endpoint_env: Option<String>,
+    read_key: K,
     open_browser: B,
     sleep: S,
 ) -> Result<()>
 where
+    K: FnOnce() -> Result<String>,
     B: FnOnce(&str) -> std::io::Result<()>,
     S: FnMut(Duration) -> SF,
     SF: Future<Output = ()>,
 {
     let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config);
 
-    if let Some(key) = args.key {
-        return login_with_api_key(&key, endpoint, store);
+    if args.with_key {
+        return login_with_api_key(read_key()?.trim(), endpoint, store);
     }
 
     let browser = (!args.no_browser).then_some(open_browser);

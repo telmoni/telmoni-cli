@@ -18,12 +18,12 @@ pub struct ConfigArgs {
 pub enum ConfigSubcommand {
     /// Get a configuration parameter.
     Get {
-        /// The setting key (endpoint, output_format).
+        /// The setting key (endpoint, output_format, api_key_helper).
         key: String,
     },
     /// Set a configuration parameter.
     Set {
-        /// The setting key (endpoint, output_format).
+        /// The setting key (endpoint, output_format, api_key_helper).
         key: String,
         /// The value to assign.
         value: String,
@@ -49,14 +49,18 @@ pub fn execute(args: ConfigArgs, path: &Path) -> Result<()> {
             println!("Telmoni CLI Configuration");
             println!("-------------------------");
             println!(
-                "  endpoint:      {}",
+                "  endpoint:       {}",
                 config
                     .endpoint
                     .unwrap_or_else(|| format!("(default: {DEFAULT_TELMONI_ENDPOINT})"))
             );
             println!(
-                "  output_format: {}",
+                "  output_format:  {}",
                 config.output_format.as_deref().unwrap_or("(default: text)")
+            );
+            println!(
+                "  api_key_helper: {}",
+                config.api_key_helper.as_deref().unwrap_or("(not set)")
             );
         }
     }

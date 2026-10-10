@@ -16,6 +16,11 @@ pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://telmoni.com";
 pub struct Config {
     pub endpoint: Option<String>,
     pub output_format: Option<String>,
+    /// A shell command that prints an API key, run for each command that
+    /// acts with one when `TELMONI_API_KEY` is unset: a secret manager's
+    /// read, so the key is fetched fresh and never saved. The command, not
+    /// the key, is what this file holds.
+    pub api_key_helper: Option<String>,
 }
 
 /// Normalizes an endpoint string by trimming whitespace, stripping trailing slashes,
@@ -100,7 +105,11 @@ pub fn get_config_value(path: &Path, key: &str) -> Result<Option<String>> {
     match key {
         "endpoint" => Ok(config.endpoint),
         "output_format" => Ok(config.output_format),
-        _ => bail!("unknown configuration key '{key}'. Valid keys: endpoint, output_format"),
+        "api_key_helper" => Ok(config.api_key_helper),
+        _ => bail!(
+            "unknown configuration key '{key}'. Valid keys: endpoint, output_format, \
+             api_key_helper"
+        ),
     }
 }
 
@@ -110,7 +119,11 @@ pub fn set_config_value(path: &Path, key: &str, value: &str) -> Result<()> {
     match key {
         "endpoint" => config.endpoint = Some(value.to_string()),
         "output_format" => config.output_format = Some(value.to_string()),
-        _ => bail!("unknown configuration key '{key}'. Valid keys: endpoint, output_format"),
+        "api_key_helper" => config.api_key_helper = Some(value.to_string()),
+        _ => bail!(
+            "unknown configuration key '{key}'. Valid keys: endpoint, output_format, \
+             api_key_helper"
+        ),
     }
     save_config(path, &config)
 }

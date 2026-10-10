@@ -32,7 +32,7 @@ telmoni org list    # the organizations you belong to; `org switch` changes the 
 telmoni logout
 ```
 
-`telmoni login --key telmoni_…` signs in with an API key, for CI and servers. Every command, flag and variable is documented at [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli).
+For CI and servers, set `TELMONI_API_KEY`: each command uses the key and saves nothing. `telmoni login --with-key < key.txt` saves one instead, read from standard input so it never sits on the command line. On a Mac the saved login lives in the Keychain. Every command, flag and variable is documented at [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli).
 
 Add `-v` to any command to log to stderr which files it read and wrote, where its endpoint came from, and each request and answer. It never logs a token or a key.
 

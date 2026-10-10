@@ -1,4 +1,5 @@
-//! Secure local storage for Telmoni credentials.
+//! The saved login: in the macOS Keychain on a Mac, else in a credentials
+//! file only its owner can read.
 
 use std::path::PathBuf;
 
@@ -259,81 +260,136 @@ pub fn print_active_organization(org: Option<&StoredOrganization>, raw_id: Optio
     }
 }
 
-/// Store for managing credentials persistence on disk.
+/// Where the saved login is kept: on a Mac, the macOS Keychain, with the
+/// credentials file for when the Keychain refuses; elsewhere the file alone.
 #[derive(Debug, Clone)]
 pub struct CredentialsStore {
-    /// Path to credentials file.
+    /// Path to credentials file, and on a Mac the name of its Keychain item.
     pub path: PathBuf,
+    /// Whether the Keychain is tried before the file. Only the binary's own
+    /// store tries it, so no suite reads or writes a person's Keychain.
+    keychain: bool,
 }
 
 impl CredentialsStore {
-    /// Creates a new credentials store at the given path.
+    /// A store that keeps the credentials in the file at `path` alone.
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            keychain: false,
+        }
     }
 
-    /// Loads the saved credentials, if any. A missing file reads as not
-    /// signed in; one that is there but cannot be read says so on stderr
-    /// first, since the person did sign in once and has to again.
+    /// The store the binary runs with. On macOS the credentials go to the
+    /// Keychain, in an item named for `path`, so a run under another home
+    /// keeps an item of its own; the file at `path` holds them only while
+    /// the Keychain refuses, as a locked one over SSH does. Elsewhere the
+    /// file alone: the CLI runs in containers and on CI runners, which have
+    /// no keychain to ask.
+    pub fn system(path: PathBuf) -> Self {
+        Self {
+            path,
+            keychain: cfg!(target_os = "macos"),
+        }
+    }
+
+    /// Loads the saved credentials, if any. Nothing saved reads as not
+    /// signed in; a copy that is there but cannot be read says so on stderr
+    /// first, since the person did sign in once and has to again. With a
+    /// copy in the Keychain and one in the file, which a save the Keychain
+    /// refused left, the newer is read.
     pub fn load(&self) -> Result<Option<Credentials>> {
+        let mut unanswered = None;
+        let in_keychain = if self.keychain {
+            match keychain::read(&self.path) {
+                Ok(Some(content)) => parse(&content, "the Keychain"),
+                Ok(None) => {
+                    debug!("no credentials in the Keychain");
+                    None
+                }
+                Err(err) => {
+                    debug!(%err, "the Keychain could not be read");
+                    unanswered = Some(err.to_string());
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let in_file = self.load_file();
+        if in_keychain.is_none()
+            && in_file.is_none()
+            && let Some(err) = unanswered
+        {
+            eprintln!(
+                "note: the Keychain did not answer ({err}), so a login saved there is not read"
+            );
+        }
+        Ok(match (in_keychain, in_file) {
+            (Some(keychain), Some(file)) if file.updated_at > keychain.updated_at => Some(file),
+            (Some(keychain), _) => Some(keychain),
+            (None, file) => file,
+        })
+    }
+
+    fn load_file(&self) -> Option<Credentials> {
         let path = self.path.display();
         if !self.path.exists() {
             debug!(%path, "no credentials file");
-            return Ok(None);
+            return None;
         }
-        let content = match std::fs::read_to_string(&self.path) {
-            Ok(content) => content,
+        match std::fs::read_to_string(&self.path) {
+            Ok(content) => parse(&content, "the credentials file"),
             Err(err) => {
                 debug!(%path, %err, "the credentials file cannot be read");
                 eprintln!("note: the saved credentials cannot be read; sign in again");
-                return Ok(None);
+                None
             }
-        };
-        let creds = match serde_json::from_str::<Credentials>(&content) {
-            Ok(creds) => creds,
-            Err(err) => {
-                // ⚠ Where, never the error's own text: serde quotes the value
-                // it choked on, and in this file that can be a token.
-                debug!(
-                    %path,
-                    category = ?err.classify(),
-                    line = err.line(),
-                    column = err.column(),
-                    "the credentials file does not parse"
-                );
-                eprintln!("note: the saved credentials cannot be read; sign in again");
-                return Ok(None);
-            }
-        };
-        debug!(%path, auth_type = ?creds.auth_type, "credentials read");
+        }
+    }
 
-        match creds.auth_type {
-            AuthType::Device => {
-                if creds.access_token.is_none() || creds.person.is_none() {
-                    eprintln!(
-                        "note: device credentials missing access token; treating as not signed in"
-                    );
-                    return Ok(None);
+    /// Saves the credentials: to the Keychain where there is one that
+    /// answers, deleting the file a refused save left; else to the file.
+    pub fn save(&self, creds: &Credentials) -> Result<()> {
+        let json = serde_json::to_string_pretty(creds).context("serializing credentials")?;
+        if self.keychain {
+            match keychain::write(&self.path, &json) {
+                Ok(()) => {
+                    debug!("credentials saved to the Keychain");
+                    // An older copy, as secret as this one, would otherwise
+                    // stay readable on disk.
+                    if let Err(err) = remove_if_present(&self.path) {
+                        eprintln!(
+                            "note: an older copy of the credentials is still at {} ({err}); \
+                             delete it",
+                            self.path.display()
+                        );
+                    }
+                    return Ok(());
                 }
-            }
-            AuthType::ApiKey => {
-                if creds.api_key.is_none() {
-                    eprintln!("note: api_key credentials missing key; treating as not signed in");
-                    return Ok(None);
+                Err(err) => {
+                    debug!(%err, "the Keychain refused the credentials");
+                    if !self.path.exists() {
+                        eprintln!(
+                            "note: the Keychain refused the credentials ({err}); they are kept \
+                             in {} instead",
+                            self.path.display()
+                        );
+                    }
                 }
             }
         }
-        Ok(Some(creds))
+        self.save_file(&json)
     }
 
-    /// Saves the credentials to disk.
+    /// Writes the credentials file.
     ///
     /// ⚠ The tokens never sit in a file anyone else can read, not even for a
     /// moment: they go to a sibling created `0600` from the start, which is
     /// then renamed over the old file. The rename also means a crash mid-write
     /// leaves the previous file whole rather than a torn one that reads as
     /// signed out, and replaces whatever mode an older file had.
-    pub fn save(&self, creds: &Credentials) -> Result<()> {
+    fn save_file(&self, json: &str) -> Result<()> {
         let path = &self.path;
         let parent = path
             .parent()
@@ -348,8 +404,6 @@ impl CredentialsStore {
         std::os::unix::fs::DirBuilderExt::mode(&mut dirs, 0o700);
         dirs.create(parent)
             .with_context(|| format!("creating directory {}", parent.display()))?;
-
-        let json = serde_json::to_string_pretty(creds).context("serializing credentials")?;
 
         let file_name = path
             .file_name()
@@ -390,20 +444,147 @@ impl CredentialsStore {
         Ok(())
     }
 
-    /// Deletes the credentials file. One already gone is fine; one that
-    /// cannot be deleted is an error, since the token or key it holds still
-    /// signs in.
+    /// Deletes the saved credentials, from the Keychain and the file both.
+    /// One already gone is fine; one that cannot be deleted is an error,
+    /// since the token or key it holds still signs in.
     pub fn clear(&self) -> Result<()> {
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => {
-                debug!(path = %self.path.display(), "credentials file deleted");
-                Ok(())
+        let mut kept = Vec::new();
+        if self.keychain {
+            match keychain::delete(&self.path) {
+                Ok(()) => debug!("credentials deleted from the Keychain"),
+                Err(err) => kept.push(format!("the Keychain item: {err}")),
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(anyhow::anyhow!(
-                "deleting the credentials file {}: {err}",
+        }
+        match remove_if_present(&self.path) {
+            Ok(()) => debug!(path = %self.path.display(), "credentials file deleted"),
+            Err(err) => kept.push(format!(
+                "the credentials file {}: {err}",
                 self.path.display()
             )),
         }
+        if kept.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("deleting {}", kept.join("; ")))
+        }
+    }
+}
+
+/// Reads saved credentials out of `content`, from `origin`; `None`, with a
+/// note, for a copy that does not parse or lacks what it signs in with.
+fn parse(content: &str, origin: &str) -> Option<Credentials> {
+    let creds = match serde_json::from_str::<Credentials>(content) {
+        Ok(creds) => creds,
+        Err(err) => {
+            // ⚠ Where, never the error's own text: serde quotes the value it
+            // choked on, and in these credentials that can be a token.
+            debug!(
+                origin,
+                category = ?err.classify(),
+                line = err.line(),
+                column = err.column(),
+                "the saved credentials do not parse"
+            );
+            eprintln!("note: the saved credentials cannot be read; sign in again");
+            return None;
+        }
+    };
+    debug!(origin, auth_type = ?creds.auth_type, "credentials read");
+
+    match creds.auth_type {
+        AuthType::Device => {
+            if creds.access_token.is_none() || creds.person.is_none() {
+                eprintln!(
+                    "note: device credentials missing access token; treating as not signed in"
+                );
+                return None;
+            }
+        }
+        AuthType::ApiKey => {
+            if creds.api_key.is_none() {
+                eprintln!("note: api_key credentials missing key; treating as not signed in");
+                return None;
+            }
+        }
+    }
+    Some(creds)
+}
+
+/// Deletes the file at `path`; one already gone is no error.
+fn remove_if_present(path: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        done => done,
+    }
+}
+
+/// The Keychain's half of the store: one generic password, under the service
+/// `telmoni`, its account the credentials file's path.
+#[cfg(target_os = "macos")]
+mod keychain {
+    use std::path::Path;
+
+    use security_framework::base::Error;
+    use security_framework::passwords::{
+        PasswordOptions, delete_generic_password, generic_password, set_generic_password,
+    };
+
+    const SERVICE: &str = "telmoni";
+
+    /// `errSecItemNotFound`: no item under the service and account.
+    const ITEM_NOT_FOUND: i32 = -25300;
+
+    fn account(path: &Path) -> String {
+        path.display().to_string()
+    }
+
+    pub(super) fn read(path: &Path) -> Result<Option<String>, Error> {
+        match generic_password(PasswordOptions::new_generic_password(
+            SERVICE,
+            &account(path),
+        )) {
+            Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            Err(err) if err.code() == ITEM_NOT_FOUND => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn write(path: &Path, json: &str) -> Result<(), Error> {
+        set_generic_password(SERVICE, &account(path), json.as_bytes())
+    }
+
+    pub(super) fn delete(path: &Path) -> Result<(), Error> {
+        match delete_generic_password(SERVICE, &account(path)) {
+            Err(err) if err.code() == ITEM_NOT_FOUND => Ok(()),
+            done => done,
+        }
+    }
+}
+
+/// No Keychain off macOS: [`CredentialsStore::system`] never tries one here,
+/// and were it to, every call would refuse, so the file would be used.
+#[cfg(not(target_os = "macos"))]
+mod keychain {
+    use std::path::Path;
+
+    #[derive(Debug)]
+    pub(super) struct NoKeychain;
+
+    impl std::fmt::Display for NoKeychain {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("there is no Keychain on this system")
+        }
+    }
+
+    pub(super) const fn read(_path: &Path) -> Result<Option<String>, NoKeychain> {
+        Err(NoKeychain)
+    }
+
+    pub(super) const fn write(_path: &Path, _json: &str) -> Result<(), NoKeychain> {
+        Err(NoKeychain)
+    }
+
+    pub(super) const fn delete(_path: &Path) -> Result<(), NoKeychain> {
+        Err(NoKeychain)
     }
 }
