@@ -432,9 +432,9 @@ impl std::error::Error for SessionEnded {}
 
 /// The problem type of a 401 that speaks about the caller's own credentials.
 /// ⚠ Any other 401 ends nothing: it is not auth judging this session (the
-/// door answers its own hop failing as a 503, and a 401 of another shape
-/// comes from whatever sits in front of the platform), and taken as the end
-/// it would sign out every CLI that met it.
+/// server answers its own outage as a 503, and a 401 of another shape comes
+/// from whatever sits in front of the platform), and taken as the end it
+/// would sign out every CLI that met it.
 pub(crate) fn refused_credentials(err: &anyhow::Error) -> Option<&'static str> {
     let lane_err = err
         .downcast_ref::<LaneError>()
@@ -488,10 +488,11 @@ pub(crate) async fn refresh_session(
     let row_id = creds.session_row_id.as_deref();
     let mut answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
     // ⚠ The platform may have spent the token without its answer arriving:
-    // the door gives up on auth after ten seconds and answers a 503 of its
-    // own. A spent token presented again within the platform's grace (thirty
-    // seconds) earns the next pair; presented later, by the next command, it
-    // ends the session. So the refresh is asked for again at once.
+    // the server may answer a 503 of its own while its database is out of
+    // reach, or the connection may drop after the token was spent. A spent
+    // token presented again within the platform's grace (thirty seconds)
+    // earns the next pair; presented later, by the next command, it ends the
+    // session. So the refresh is asked for again at once.
     if answer.as_ref().is_err_and(unanswered) {
         debug!("the refresh got no answer to read; asking again within the platform's grace");
         answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
@@ -587,9 +588,9 @@ pub async fn revoke_session(
         return Ok(());
     }
 
-    // ⚠ A 404 is "already gone" only as auth types it. The door's own 404,
-    // for a path no lane matches (a session id that is not a UUID), leaves
-    // the session as live as it was.
+    // ⚠ A 404 is "already gone" only as auth types it. The server's own 404,
+    // `/errors/not-found`, for a path no lane matches, leaves the session as
+    // live as it was.
     let lane_err = parse_lane_error(&answer);
     if answer.status == 404 && lane_err.problem_type.as_deref() == Some("/errors/auth/not-found") {
         return Ok(());

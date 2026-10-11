@@ -135,10 +135,12 @@ where
             .verification_uri_complete
             .as_deref()
             .unwrap_or(&start.verification_uri);
-        // Opened only on the endpoint's own origin: the answer is the
-        // server's, and one naming another host or scheme would hand the
-        // one-time code — and the machine's URL handler — to whatever it
-        // named. The address is printed above either way.
+        // Opened only on a page of the deployment signed in to — the
+        // endpoint's own origin, or the console beside its machine host
+        // (`same_deployment`): the answer is the server's, and one naming
+        // another host or scheme would hand the one-time code — and the
+        // machine's URL handler — to whatever it named. The address is
+        // printed above either way.
         if same_deployment(browser_url, &endpoint) {
             if let Err(e) = open_browser(browser_url) {
                 eprintln!("note: could not open browser: {e}");

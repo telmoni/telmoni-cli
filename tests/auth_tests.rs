@@ -717,7 +717,7 @@ async fn test_refresh_asked_again_when_unanswered() {
     // a 503, then the pair
     let mut creds = expiring();
     store.save(&creds).unwrap();
-    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
     transport.push_answer(200, FRESH_TOKENS);
     refresh_if_needed(&transport, &store, &mut creds)
         .await
@@ -1672,9 +1672,10 @@ const INVALID_TOKEN: &str =
 const UNAUTHENTICATED: &str =
     r#"{"type":"/errors/auth/unauthenticated","title":"unauthenticated","status":401}"#;
 
-/// What the door answers when auth refuses the console's own service secret:
-/// the platform failing on its own side, which says nothing about the session.
-const OWN_SIDE_FAILED: &str = r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the platform failed on its own side; try again shortly"}"#;
+/// What the server answers when it cannot read what it judges a bearer by,
+/// its database or the identity provider's keys: the platform failing on its
+/// own side, which says nothing about the session.
+const SERVER_UNAVAILABLE: &str = r#"{"type":"/errors/auth/identity-unavailable","title":"identity temporarily unavailable","status":503}"#;
 
 /// A 401 that is not auth's, with no problem type: what something in front of
 /// the platform might answer.
@@ -1703,11 +1704,11 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
 
     transport.push_answer(401, TOKEN_EXPIRED);
-    // The door's own answer when the server does not: a problem document. The
-    // refresh is asked for twice, since the first may have spent the token.
-    let unavailable = r#"{"type":"/errors/upstream-unavailable","title":"upstream unavailable","status":503,"detail":"the server did not answer; try again shortly"}"#;
-    transport.push_answer(503, unavailable);
-    transport.push_answer(503, unavailable);
+    // The server's own answer when it cannot reach what a refresh needs: a
+    // problem document. The refresh is asked for twice, since the first may
+    // have spent the token.
+    transport.push_answer(503, SERVER_UNAVAILABLE);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
 
     let err = status::execute(
         status::StatusArgs { json: false },
@@ -1720,10 +1721,7 @@ async fn test_status_keeps_credentials_on_refresh_server_error() {
     .await
     .unwrap_err();
 
-    assert_eq!(
-        err.to_string(),
-        "upstream unavailable: the server did not answer; try again shortly"
-    );
+    assert_eq!(err.to_string(), "identity temporarily unavailable");
     assert!(store.path.exists(), "a 503 must never delete credentials");
     assert_eq!(transport.requests.lock().unwrap().len(), 3);
 }
@@ -2516,7 +2514,7 @@ fn test_debug_never_prints_a_secret() {
 }
 
 // 25. A 401 on /cli/me is read by its type. The platform failing on its own
-//     side, which the door answers as a 503, says nothing of the session, and
+//     side, which the server answers as a 503, says nothing of the session, and
 //     nor does a 401 that is not auth's: it is kept. One for an unknown
 //     bearer, which an expired one is once swept, gets the refresh that
 //     decides; one for a session that is over ends it at once.
@@ -2540,14 +2538,11 @@ async fn test_status_reads_a_401_by_its_type() {
     };
 
     // 25a. the platform failing on its own side, on /cli/me: kept, and said as
-    //      the door says it
+    //      the server says it
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
-    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
     let err = status().await.unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "upstream unavailable: the platform failed on its own side; try again shortly"
-    );
+    assert_eq!(err.to_string(), "identity temporarily unavailable");
     assert!(store.path.exists());
 
     // 25b. a 401 that is not auth's: kept, with no refresh
@@ -2561,8 +2556,8 @@ async fn test_status_reads_a_401_by_its_type() {
     let mut expiring = device_creds(&["org_1"], "org_1");
     expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
     store.save(&expiring).unwrap();
-    transport.push_answer(503, OWN_SIDE_FAILED);
-    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
     status().await.unwrap_err();
     assert!(store.path.exists());
 
@@ -2669,14 +2664,11 @@ async fn test_end_session_reads_a_401_by_its_type() {
 
     // 26d. the platform failing on its own side, and a 401 that is not auth's:
     //      not confirmed, and no refresh
-    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
     let err = end_session(&transport, &store, &mut creds, None)
         .await
         .unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "upstream unavailable: the platform failed on its own side; try again shortly"
-    );
+    assert_eq!(err.to_string(), "identity temporarily unavailable");
     assert_eq!(take().len(), 1);
     transport.push_answer(401, FOREIGN_401);
     let err = end_session(&transport, &store, &mut creds, None)
@@ -2717,7 +2709,7 @@ async fn test_end_session_reads_a_401_by_its_type() {
 
     // 26h. logout deletes the file whatever the answer
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
-    transport.push_answer(503, OWN_SIDE_FAILED);
+    transport.push_answer(503, SERVER_UNAVAILABLE);
     logout::execute(logout::LogoutArgs {}, &transport, &store, None)
         .await
         .unwrap();
