@@ -142,14 +142,14 @@ fn signed_out_status_names_the_endpoint() {
 
     let out = sandbox.run(&["status"], &[]);
     assert_eq!(out.status.code(), Some(1));
-    assert_eq!(stdout(&out), "Endpoint: https://telmoni.com\n");
+    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
     assert!(stderr(&out).contains("Not signed in"), "{}", stderr(&out));
 
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "localhost:3000")]);
     assert_eq!(stdout(&out), "Endpoint: http://localhost:3000\n");
 
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "  ")]);
-    assert_eq!(stdout(&out), "Endpoint: https://telmoni.com\n");
+    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
 
     let out = sandbox.run(&["whoami", "--json"], &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -203,7 +203,7 @@ fn configuration_file_through_the_binary() {
         "{}",
         stderr(&out)
     );
-    assert_eq!(stdout(&out), "Endpoint: https://telmoni.com\n");
+    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
 }
 
 // A debug build reads `.env` from the working directory, after the
@@ -222,7 +222,7 @@ fn dotenv_only_in_a_debug_build() {
     let read = if cfg!(debug_assertions) {
         "https://dotenv.example"
     } else {
-        "https://telmoni.com"
+        "https://api.telmoni.com"
     };
     assert_eq!(stdout(&out), format!("Endpoint: {read}\n"));
 

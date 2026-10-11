@@ -8,8 +8,9 @@ use tracing::debug;
 
 use crate::transport::is_loopback_host;
 
-/// Default Telmoni API endpoint.
-pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://telmoni.com";
+/// Default Telmoni API endpoint: the machine host, where the server serves
+/// the lanes a machine calls straight; the console's host answers people.
+pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://api.telmoni.com";
 
 /// CLI configuration file structure (`~/.config/telmoni/config.json`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

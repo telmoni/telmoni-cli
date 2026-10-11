@@ -10,10 +10,9 @@ use tracing::debug;
 pub(crate) const REDACTED: &str = "<redacted>";
 
 /// The longest a request may take, from connecting to the last byte of the
-/// answer: without one a stalled connection waits forever. Well past the
-/// console's own wait on the server (10 s: the `/cli` door's
-/// `UPSTREAM_TIMEOUT_MS`, the `/v1` relay's `READ_TIMEOUT_MS`), so its 503
-/// problem arrives first.
+/// answer: without one a stalled connection waits forever. Well past what a
+/// healthy platform takes to answer any lane the CLI calls, so a problem the
+/// server answers arrives first and only a stalled host runs this out.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The longest connecting may take, within `REQUEST_TIMEOUT`: a host that

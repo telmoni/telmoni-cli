@@ -1067,7 +1067,7 @@ fn test_endpoint_precedence() {
     );
     assert_eq!(
         resolve_endpoint(None, Some(""), &Config::default()),
-        "https://telmoni.com"
+        "https://api.telmoni.com"
     );
     assert_eq!(
         resolve_endpoint(Some("api.example.com/"), None, &Config::default()),

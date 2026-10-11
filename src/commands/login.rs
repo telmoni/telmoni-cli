@@ -22,7 +22,7 @@ pub struct LoginArgs {
     #[arg(long, conflicts_with = "no_browser")]
     pub with_key: bool,
 
-    /// Target Telmoni endpoint URL (e.g. `https://telmoni.com`).
+    /// Target Telmoni endpoint URL (e.g. `https://api.telmoni.com`).
     #[arg(long, env = "TELMONI_ENDPOINT")]
     pub endpoint: Option<String>,
 
@@ -42,18 +42,31 @@ pub fn validate_api_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// Whether `candidate` is on `endpoint`'s origin: the same scheme, host and
-/// port, the port read with its scheme's default filled in.
-pub fn same_origin(candidate: &str, endpoint: &str) -> bool {
+/// Whether `candidate` is a page of the deployment `endpoint` names: on
+/// `endpoint`'s own origin — the same scheme, host and port, the port read
+/// with its scheme's default filled in — or on the console beside a machine
+/// host, the host `endpoint` has with its leading `api.` taken off, over the
+/// same scheme and port. The device page is the console's, and a platform
+/// keeps its console and its machine host apart (`telmoni.com` beside
+/// `api.telmoni.com`), so the one page the CLI opens unasked is the one the
+/// platform it signs in to named, and never an address a stranger's answer
+/// could point it at.
+pub fn same_deployment(candidate: &str, endpoint: &str) -> bool {
     let (Ok(candidate), Ok(endpoint)) = (
         reqwest::Url::parse(candidate),
         reqwest::Url::parse(endpoint),
     ) else {
         return false;
     };
-    candidate.scheme() == endpoint.scheme()
-        && candidate.host_str() == endpoint.host_str()
-        && candidate.port_or_known_default() == endpoint.port_or_known_default()
+    if candidate.scheme() != endpoint.scheme()
+        || candidate.port_or_known_default() != endpoint.port_or_known_default()
+    {
+        return false;
+    }
+    let (Some(page), Some(machine)) = (candidate.host_str(), endpoint.host_str()) else {
+        return false;
+    };
+    page == machine || machine.strip_prefix("api.") == Some(page)
 }
 
 /// Executes the `telmoni login` flow. `endpoint_env` is `TELMONI_ENDPOINT`
@@ -126,7 +139,7 @@ where
         // server's, and one naming another host or scheme would hand the
         // one-time code — and the machine's URL handler — to whatever it
         // named. The address is printed above either way.
-        if same_origin(browser_url, &endpoint) {
+        if same_deployment(browser_url, &endpoint) {
             if let Err(e) = open_browser(browser_url) {
                 eprintln!("note: could not open browser: {e}");
             }
@@ -160,4 +173,58 @@ where
     print_active_organization(creds.active_organization(), raw_active_id.as_deref());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_deployment;
+
+    /// The platform's own page opens: on the endpoint itself, or on the
+    /// console beside its machine host.
+    #[test]
+    fn the_console_beside_a_machine_host_is_the_same_deployment() {
+        assert!(same_deployment(
+            "https://telmoni.com/auth/device?code=ABCD",
+            "https://api.telmoni.com"
+        ));
+        assert!(same_deployment(
+            "https://dev.telmoni.com/auth/device",
+            "https://api.dev.telmoni.com"
+        ));
+        assert!(same_deployment(
+            "https://telmoni.example.com/auth/device",
+            "https://telmoni.example.com"
+        ));
+        assert!(same_deployment(
+            "http://localhost:3000/auth/device",
+            "http://localhost:3000"
+        ));
+    }
+
+    /// Anything else stays shut: another host, the label the other way
+    /// round, another scheme, another port, or no address at all.
+    #[test]
+    fn any_other_address_is_not() {
+        assert!(!same_deployment(
+            "https://evil.example/auth/device",
+            "https://api.telmoni.com"
+        ));
+        assert!(!same_deployment(
+            "https://api.telmoni.com/auth/device",
+            "https://telmoni.com"
+        ));
+        assert!(!same_deployment(
+            "https://notapi.telmoni.com/auth/device",
+            "https://api.telmoni.com"
+        ));
+        assert!(!same_deployment(
+            "http://telmoni.com/auth/device",
+            "https://api.telmoni.com"
+        ));
+        assert!(!same_deployment(
+            "https://telmoni.com:8443/auth/device",
+            "https://api.telmoni.com"
+        ));
+        assert!(!same_deployment("not a url", "https://api.telmoni.com"));
+    }
 }
