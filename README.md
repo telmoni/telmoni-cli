@@ -3,7 +3,7 @@
 [![CI](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-`telmoni`, the command-line client for [Telmoni](https://github.com/telmoni/telmoni), and the client SDKs. It talks to one platform, `https://telmoni.com` unless `TELMONI_ENDPOINT` names another, and to nothing else.
+`telmoni`, the command-line client for [Telmoni](https://github.com/telmoni/telmoni). It talks to one platform and to nothing else, `https://api.telmoni.com`, the machine host, unless `TELMONI_ENDPOINT` names another. The SDKs that record an agent's runs are the platform's, under [`sdk/`](https://github.com/telmoni/telmoni/tree/main/sdk) in that repository, and documented at [telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks).
 
 ## Install
 
@@ -36,15 +36,10 @@ For CI and servers, set `TELMONI_API_KEY`: each command uses the key and saves n
 
 Add `-v` to any command to log to stderr which files it read and wrote, where its endpoint came from, and each request and answer. It never logs a token or a key.
 
-## SDKs
-
-`sdk/` holds configuration-only scaffolds for TypeScript, Python, Go and Rust; each grows a client once its contract exists. See [telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks).
-
 ## Layout
 
 ```text
 src/            the CLI: commands, the device-flow sign-in, the HTTP transport
-sdk/            the SDK scaffolds: typescript/, python/, go/, rust/
 tests/          mock-based suites, no network
 xtask/          the gate (`cargo xtask ci`) and release packaging (`cargo xtask dist`)
 install.sh      the installer: this machine's archive from a release, checked against SHA256SUMS
@@ -53,7 +48,7 @@ ARCHITECTURE.md how it is built, and why, on one page
 
 ## Contributing
 
-How to contribute, the AI policy, the Code of Conduct and the security policy are in the docs: [telmoni.com/docs/contributing](https://telmoni.com/docs/contributing/introduction). [Developing](https://telmoni.com/docs/contributing/developing#the-cli-and-sdks) gets you building.
+How to contribute, the AI policy, the Code of Conduct and the security policy are in the docs: [telmoni.com/docs/contributing](https://telmoni.com/docs/contributing/introduction). [Developing](https://telmoni.com/docs/contributing/developing#the-cli) gets you building.
 
 ## License
 

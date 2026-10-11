@@ -1219,13 +1219,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "telmoni-sdk"
-version = "0.0.1"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "terminal_size"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

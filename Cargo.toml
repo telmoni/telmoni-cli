@@ -23,7 +23,6 @@ resolver = "3"
 members = [
     ".",
     "xtask",
-    "sdk/rust",
 ]
 default-members = ["."]
 

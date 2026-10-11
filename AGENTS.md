@@ -1,26 +1,24 @@
 # Telmoni CLI — Agent Guidelines
 
-The `telmoni` command-line client and client SDK scaffolds ([`telmoni/telmoni-cli`](https://github.com/telmoni/telmoni-cli)): a Rust workspace (`src/`) and SDKs (`sdk/`). It is a client of the platform ([`telmoni/telmoni`](https://github.com/telmoni/telmoni)) and of nothing else: nothing here runs on a server, holds a database or verifies a token. Every request goes to one base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise (`http://localhost:3000` locally), and no other hostname appears in `src/` or `sdk/`.
+The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/telmoni/telmoni-cli)): a Rust workspace (`src/`). It is a client of the platform ([`telmoni/telmoni`](https://github.com/telmoni/telmoni)) and of nothing else: nothing here runs on a server, holds a database or verifies a token. Its requests go to one base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise (`http://localhost:3000` locally), moving to the machine host, `https://api.telmoni.com`, once the platform serves its lanes there; no other hostname appears in `src/`. The SDKs, which send an agent's spans to the platform's ingest, are the platform's, under `sdk/` in `telmoni/telmoni`.
 
 ## Ground Rules
 - **Pre-launch:** nothing has shipped. Change commands, flags, the credentials file and the config file directly to their ideal shape; no migration of an old file, no deprecated aliases, no shims.
 - **Quality gate:** never weaken a test or leave the tree broken.
-- **Ask first:** any dependency change (any edit to a `Cargo.toml`, `Cargo.lock` or an SDK's lockfile, lockfile-only refreshes included; nothing in the current scope needs one, and anything added must pass `cargo deny check`) and any external-state change, such as publishing a release or a package.
+- **Ask first:** any dependency change (any edit to a `Cargo.toml` or `Cargo.lock`, lockfile-only refreshes included; nothing in the current scope needs one, and anything added must pass `cargo deny check`) and any external-state change, such as publishing a release or a package.
 - **Stateless machines:** the CLI runs over SSH, in containers, on CI runners and on hosts with no browser. Nothing may depend on a browser reaching the machine, a listening port, or state beyond the saved login (the macOS Keychain on a Mac, the credentials file standing in wherever it refuses) and the config file (`config.json` beside it).
 
 ## Where Things Live
 | Path | What |
 |---|---|
 | `src/` | The CLI: `main.rs` and `login`'s `--endpoint` flag (the only environment and standard-input reads, beside reqwest's proxy variables), `auth/` (device flow, a key for one command, the saved login), `commands/`, `client.rs` (`/v1`), `transport.rs` (HTTP, errors, User-Agent). |
-| `sdk/` | SDK scaffolds (`rust/`, `typescript/`, `go/`, `python/`): configuration structs, no HTTP. |
 | `tests/` | Mock-based suites: no network, no sleeps. |
 | `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
-| `ARCHITECTURE.md` | How the CLI and its SDKs are built, and why, on one page: the repository's one internal document, the SDKs' contract and parity tables (*The SDKs*) among it. |
-| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform, the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI and SDK pages among them. |
+| `ARCHITECTURE.md` | How the CLI is built, and why, on one page: the repository's one internal document. |
+| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI's page (`api/cli.mdx`) among them. |
 
 ## Commands
 - **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, checks that the toolchain channel matches `rust-version`, then clippy, build, test, doc and `cargo deny check`, all `--locked`.
-- **SDK scaffolds:** `npm test --prefix sdk/typescript`, `go test ./...` in `sdk/go`, `sdk/python/.venv/bin/pytest sdk/python`.
 - **Locally:** `cargo run -- <command>`; with the platform's `make up` running, `TELMONI_ENDPOINT=http://localhost:3000` points it there.
 
 ## Code Rules
@@ -36,9 +34,9 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - **Errors** are parsed in three shapes: RFC 9457 problem details (print `title: detail`), `{ "error": … }` (nothing the CLI calls — `/cli`, `/v1` — sends it today; kept for whatever sits in front of them), or anything else (`request failed (<status>)` plus the first 200 characters). Never print a token, refresh token, device code or API key; the user code is the only code shown.
 - **Every request** carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)`, and every bearer request that acts in an organization `x-organization-id`: always an id — the active organization's from `/cli/me`, or the one `TELMONI_ORG` or `org switch` names by id or exact slug, resolved against the cached list (the `/cli` door refuses anything but an `org_…` id; a label is never accepted). Nullable server fields are `Option`s.
 - **Labels and slugs:** an organization's label is its trimmed `name`; never `ownerEmail`. Its slug is set when it is created: the URL its owner chose, else one derived from its name when that is free, else a placeholder (`org-` and ten random characters); after that only a change to its URL in the console's Settings moves it, never a rename.
-- **API keys** start with `telmoni_` and open only `{endpoint}/v1`, never `/cli`; every `/v1` lane is a read today.
+- **API keys** start with `telmoni_` and open only `{endpoint}/v1`, with the `read` scope, and `{endpoint}/otlp/v1/traces`, with the `ingest` scope; never `/cli`. Every `/v1` lane is a read today; ingest is written by the platform's SDKs alone, and the CLI calls it nowhere.
 - **Credentials** live in the macOS Keychain on a Mac (service `telmoni`, the credentials file's path as the account), else in `dirs::config_dir()/telmoni/credentials.json`, mode `0600`, unencrypted. A key in `TELMONI_API_KEY`, or from `api_key_helper`, is used for one command and never saved; no key is ever an argument.
-- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one saved login, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines. The SDKs stay configuration-only until their contract exists, and grow together: a behaviour added to one lands in all four in the same change, with its row in `ARCHITECTURE.md`'s parity tables (*The SDKs*).
+- **Scope:** the commands are `login`, `logout`, `status`/`whoami`, `org list|switch` and `config`; one saved login, no profiles. A command that touches customer data needs its lane in the platform first: `/cli` for a signed-in person, `/v1` for an API key, or another lane the platform's code defines.
 
 ## Agent Hygiene
 - **This repo only:** change nothing in another repository (`telmoni/telmoni`, any other) unless the user says so for this task; that binds subagents too. Reading is fine.
@@ -57,5 +55,5 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
 - [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
-- [ ] A change a user can see names the customer pages it leaves wrong (`api/cli.mdx`, `api/sdks.mdx`, under `web/content/docs` in `telmoni/telmoni`).
+- [ ] A change a user can see names the customer pages it leaves wrong (`api/cli.mdx` under `web/content/docs` in `telmoni/telmoni`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).

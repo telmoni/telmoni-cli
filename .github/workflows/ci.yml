@@ -1,4 +1,4 @@
-# CI: the host-safe gate for the Telmoni CLI and SDK workspace.
+# CI: the host-safe gate for the Telmoni CLI.
 name: CI
 
 on:
@@ -48,65 +48,6 @@ jobs:
       - name: Run the gate
         run: cargo xtask ci
 
-  sdks:
-    name: test sdks (${{ matrix.sdk }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sdk: typescript
-          - sdk: go
-          - sdk: python
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Setup Node
-        if: matrix.sdk == 'typescript'
-        uses: actions/setup-node@v7
-        with:
-          # The locked vitest's engines: 22.12+, 24 or 26+.
-          node-version: 22
-
-      - name: Verify TypeScript SDK
-        if: matrix.sdk == 'typescript'
-        run: |
-          cd sdk/typescript
-          npm ci
-          npm run verify
-
-      - name: Setup Go
-        if: matrix.sdk == 'go'
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.22'
-
-      - name: Verify Go SDK
-        if: matrix.sdk == 'go'
-        run: |
-          cd sdk/go
-          go test -v ./...
-
-      - name: Setup Python
-        if: matrix.sdk == 'python'
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-
-      - name: Verify Python SDK
-        if: matrix.sdk == 'python'
-        run: |
-          cd sdk/python
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          ruff check .
-          ruff format --check .
-          mypy
-          pytest
-
   lint-workflows:
     name: lint workflows (actionlint)
     runs-on: ubuntu-24.04
@@ -134,7 +75,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [gate, sdks, lint-workflows]
+    needs: [gate, lint-workflows]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

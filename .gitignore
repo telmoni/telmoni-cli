@@ -25,18 +25,5 @@ dist/
 *.sublime-workspace
 .DS_Store
 
-# ── SDKs ──────────────────────────────────────────────────────────────────────
-# The SDKs under `sdk/` are four ecosystems in one tree, and each vendors differently.
-sdk/*/node_modules/
-sdk/*/dist/
-sdk/*/.venv/
-sdk/**/__pycache__/
-sdk/*/.pytest_cache/
-sdk/*/.mypy_cache/
-sdk/*/.ruff_cache/
-sdk/**/*.egg-info/
-*.egg-info/
-*.pyc
-
 # The plan is kept outside the repository, under scratch/.
 /ROADMAP.md
