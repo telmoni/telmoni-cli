@@ -15,7 +15,8 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 | `tests/` | Mock-based suites: no network, no sleeps. |
 | `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
 | `ARCHITECTURE.md` | How the CLI is built, and why, on one page: the repository's one internal document. |
-| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI's page (`api/cli.mdx`) among them. |
+| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), and the authority on the wire contract. |
+| [`telmoni/docs`](https://github.com/telmoni/docs) | Sibling repo, checked out as `../docs`: the customer docs (`content/`), the CLI's page (`content/api/cli.mdx`) among them, which the platform's console serves at `/docs`. |
 
 ## Commands
 - **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, checks that the toolchain channel matches `rust-version`, then clippy, build, test, doc and `cargo deny check`, all `--locked`.
@@ -55,5 +56,5 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
 - [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
-- [ ] A change a user can see names the customer pages it leaves wrong (`api/cli.mdx` under `web/content/docs` in `telmoni/telmoni`).
+- [ ] A change a user can see names the customer pages it leaves wrong (`content/api/cli.mdx` in `telmoni/docs`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).
