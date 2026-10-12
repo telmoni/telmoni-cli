@@ -78,7 +78,12 @@ async fn main() {
         std::process::exit(1);
     };
     let telmoni_dir = config_dir.join("telmoni");
-    let store = CredentialsStore::system(telmoni_dir.join("credentials.json"));
+    // A Keychain dialog waits for a person, who is there only when stderr is
+    // a terminal; not stdin, which `login --with-key` is piped even at one.
+    let store = CredentialsStore::system(
+        telmoni_dir.join("credentials.json"),
+        std::io::stderr().is_terminal(),
+    );
     let config_path = telmoni_dir.join("config.json");
 
     let transport = match ReqwestTransport::new() {

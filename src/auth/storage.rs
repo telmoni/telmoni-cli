@@ -269,6 +269,8 @@ pub struct CredentialsStore {
     /// Whether the Keychain is tried before the file. Only the binary's own
     /// store tries it, so no suite reads or writes a person's Keychain.
     keychain: bool,
+    /// Whether the Keychain may put up a dialog.
+    may_ask: bool,
 }
 
 impl CredentialsStore {
@@ -277,6 +279,7 @@ impl CredentialsStore {
         Self {
             path,
             keychain: false,
+            may_ask: false,
         }
     }
 
@@ -286,10 +289,18 @@ impl CredentialsStore {
     /// the Keychain refuses, as a locked one over SSH does. Elsewhere the
     /// file alone: the CLI runs in containers and on CI runners, which have
     /// no keychain to ask.
-    pub fn system(path: PathBuf) -> Self {
+    ///
+    /// `may_ask` says a person is there to answer the Keychain's dialogs:
+    /// the one that unlocks it, and the one that lets a rebuilt binary read
+    /// the item an older build saved. ⚠ Without one, a dialog never returns
+    /// and the command hangs (a macOS CI runner has a screen and no one at
+    /// it), so a dialog the Keychain would need is a refusal instead, as
+    /// over SSH, and the file stands in.
+    pub fn system(path: PathBuf, may_ask: bool) -> Self {
         Self {
             path,
             keychain: cfg!(target_os = "macos"),
+            may_ask,
         }
     }
 
@@ -301,7 +312,7 @@ impl CredentialsStore {
     pub fn load(&self) -> Result<Option<Credentials>> {
         let mut unanswered = None;
         let in_keychain = if self.keychain {
-            match keychain::read(&self.path) {
+            match keychain::read(&self.path, self.may_ask) {
                 Ok(Some(content)) => parse(&content, "the Keychain"),
                 Ok(None) => {
                     debug!("no credentials in the Keychain");
@@ -353,7 +364,7 @@ impl CredentialsStore {
     pub fn save(&self, creds: &Credentials) -> Result<()> {
         let json = serde_json::to_string_pretty(creds).context("serializing credentials")?;
         if self.keychain {
-            match keychain::write(&self.path, &json) {
+            match keychain::write(&self.path, &json, self.may_ask) {
                 Ok(()) => {
                     debug!("credentials saved to the Keychain");
                     // An older copy, as secret as this one, would otherwise
@@ -450,7 +461,7 @@ impl CredentialsStore {
     pub fn clear(&self) -> Result<()> {
         let mut kept = Vec::new();
         if self.keychain {
-            match keychain::delete(&self.path) {
+            match keychain::delete(&self.path, self.may_ask) {
                 Ok(()) => debug!("credentials deleted from the Keychain"),
                 Err(err) => kept.push(format!("the Keychain item: {err}")),
             }
@@ -525,6 +536,7 @@ mod keychain {
     use std::path::Path;
 
     use security_framework::base::Error;
+    use security_framework::os::macos::keychain::SecKeychain;
     use security_framework::passwords::{
         PasswordOptions, delete_generic_password, generic_password, set_generic_password,
     };
@@ -538,23 +550,40 @@ mod keychain {
         path.display().to_string()
     }
 
-    pub(super) fn read(path: &Path) -> Result<Option<String>, Error> {
-        match generic_password(PasswordOptions::new_generic_password(
-            SERVICE,
-            &account(path),
-        )) {
+    /// Runs `call` with the Keychain's dialogs off unless `may_ask`, so that
+    /// one it would need fails at once, `errSecInteractionNotAllowed`, rather
+    /// than wait for a person who is not there. The switch is the process's
+    /// own, and back on once `call` returns.
+    fn with_dialogs<T>(may_ask: bool, call: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+        let _quiet = if may_ask {
+            None
+        } else {
+            Some(SecKeychain::disable_user_interaction()?)
+        };
+        call()
+    }
+
+    pub(super) fn read(path: &Path, may_ask: bool) -> Result<Option<String>, Error> {
+        match with_dialogs(may_ask, || {
+            generic_password(PasswordOptions::new_generic_password(
+                SERVICE,
+                &account(path),
+            ))
+        }) {
             Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
             Err(err) if err.code() == ITEM_NOT_FOUND => Ok(None),
             Err(err) => Err(err),
         }
     }
 
-    pub(super) fn write(path: &Path, json: &str) -> Result<(), Error> {
-        set_generic_password(SERVICE, &account(path), json.as_bytes())
+    pub(super) fn write(path: &Path, json: &str, may_ask: bool) -> Result<(), Error> {
+        with_dialogs(may_ask, || {
+            set_generic_password(SERVICE, &account(path), json.as_bytes())
+        })
     }
 
-    pub(super) fn delete(path: &Path) -> Result<(), Error> {
-        match delete_generic_password(SERVICE, &account(path)) {
+    pub(super) fn delete(path: &Path, may_ask: bool) -> Result<(), Error> {
+        match with_dialogs(may_ask, || delete_generic_password(SERVICE, &account(path))) {
             Err(err) if err.code() == ITEM_NOT_FOUND => Ok(()),
             done => done,
         }
@@ -576,15 +605,15 @@ mod keychain {
         }
     }
 
-    pub(super) const fn read(_path: &Path) -> Result<Option<String>, NoKeychain> {
+    pub(super) const fn read(_path: &Path, _may_ask: bool) -> Result<Option<String>, NoKeychain> {
         Err(NoKeychain)
     }
 
-    pub(super) const fn write(_path: &Path, _json: &str) -> Result<(), NoKeychain> {
+    pub(super) const fn write(_path: &Path, _json: &str, _may_ask: bool) -> Result<(), NoKeychain> {
         Err(NoKeychain)
     }
 
-    pub(super) const fn delete(_path: &Path) -> Result<(), NoKeychain> {
+    pub(super) const fn delete(_path: &Path, _may_ask: bool) -> Result<(), NoKeychain> {
         Err(NoKeychain)
     }
 }
