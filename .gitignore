@@ -4,7 +4,13 @@
 # Numbered, so a source file named core.rs or core.ts is not ignored with them.
 core.[0-9]*
 *.log
-.claude
+
+# ── AI / tooling state ────────────────────────────────────────────────────────
+.claude/
+.agents/
+.gemini/
+.aider*
+.cursor/
 
 # ── Scratch / planning ────────────────────────────────────────────────────────
 scratch/
