@@ -172,7 +172,7 @@ fn resolve_device_active_org(
 ) -> Result<Option<String>> {
     if let Some(env_org) = telmoni_org_env {
         // The cache, not the truth: a slug the organization took since, by a
-        // URL change, is unknown here until `/cli/me` is read again.
+        // URL change, is unknown here until `/cli/v1/me` is read again.
         let Some(named) = creds.organization_named(env_org) else {
             bail!(
                 "TELMONI_ORG names no organization in the cached list; run telmoni status \

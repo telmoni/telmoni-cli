@@ -10,7 +10,7 @@ use tracing::debug;
 use crate::auth::storage::{Credentials, CredentialsStore};
 use crate::transport::{LaneAnswer, LaneError, LaneRequest, REDACTED, Transport, parse_lane_error};
 
-/// Response from `POST /cli/auth/device`.
+/// Response from `POST /cli/v1/auth/device`.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceStart {
@@ -108,7 +108,7 @@ impl std::fmt::Debug for AuthnResult {
     }
 }
 
-/// Person identity returned by `/cli/me`.
+/// Person identity returned by `/cli/v1/me`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Person {
@@ -123,7 +123,7 @@ pub struct Person {
     pub analytics_opt_in: bool,
 }
 
-/// Organization membership details returned by `/cli/me`.
+/// Organization membership details returned by `/cli/v1/me`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Organization {
@@ -149,14 +149,14 @@ pub struct Organization {
 
 impl Organization {
     /// The organization's label: its name, as the console shows it. Never the
-    /// owner's address, which `/cli/me` carries beside it: an address is a
+    /// owner's address, which `/cli/v1/me` carries beside it: an address is a
     /// person's.
     pub fn label(&self) -> &str {
         self.name.trim()
     }
 }
 
-/// Response returned by `POST /cli/me`.
+/// Response returned by `POST /cli/v1/me`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Me {
@@ -201,9 +201,9 @@ pub enum PollOutcome {
     Failed(String),
 }
 
-/// Initiates device authorization by calling `POST {endpoint}/cli/auth/device`.
+/// Initiates device authorization by calling `POST {endpoint}/cli/v1/auth/device`.
 pub async fn start_device_auth(transport: &impl Transport, endpoint: &str) -> Result<DeviceStart> {
-    let url = format!("{}/cli/auth/device", endpoint.trim_end_matches('/'));
+    let url = format!("{}/cli/v1/auth/device", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
         method: reqwest::Method::POST,
         url,
@@ -228,13 +228,13 @@ pub async fn start_device_auth(transport: &impl Transport, endpoint: &str) -> Re
     bail!("{}", lane_err.message);
 }
 
-/// Performs a single poll iteration against `POST {endpoint}/cli/auth/device/poll`.
+/// Performs a single poll iteration against `POST {endpoint}/cli/v1/auth/device/poll`.
 pub async fn poll_once(
     transport: &impl Transport,
     endpoint: &str,
     device_code: &str,
 ) -> Result<PollOutcome> {
-    let url = format!("{}/cli/auth/device/poll", endpoint.trim_end_matches('/'));
+    let url = format!("{}/cli/v1/auth/device/poll", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
         method: reqwest::Method::POST,
         url,
@@ -340,14 +340,14 @@ where
     }
 }
 
-/// Calls `POST {endpoint}/cli/me` to retrieve session identity and organizations.
+/// Calls `POST {endpoint}/cli/v1/me` to retrieve session identity and organizations.
 pub async fn fetch_me(
     transport: &impl Transport,
     endpoint: &str,
     access_token: &str,
     organization_id: Option<&str>,
 ) -> Result<Me> {
-    let url = format!("{}/cli/me", endpoint.trim_end_matches('/'));
+    let url = format!("{}/cli/v1/me", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
         method: reqwest::Method::POST,
         url,
@@ -358,7 +358,7 @@ pub async fn fetch_me(
 
     let answer = transport.send(req).await?;
     if answer.status == 200 {
-        let me: Me = serde_json::from_str(&answer.body).context("decoding /cli/me response")?;
+        let me: Me = serde_json::from_str(&answer.body).context("decoding /cli/v1/me response")?;
         return Ok(me);
     }
 
@@ -366,14 +366,14 @@ pub async fn fetch_me(
     bail!(lane_err)
 }
 
-/// Refreshes session tokens via `POST {endpoint}/cli/auth/refresh`.
+/// Refreshes session tokens via `POST {endpoint}/cli/v1/auth/refresh`.
 pub async fn refresh_tokens(
     transport: &impl Transport,
     endpoint: &str,
     refresh_token: &str,
     session_row_id: Option<&str>,
 ) -> Result<AuthnResult> {
-    let url = format!("{}/cli/auth/refresh", endpoint.trim_end_matches('/'));
+    let url = format!("{}/cli/v1/auth/refresh", endpoint.trim_end_matches('/'));
     let mut body_map = serde_json::Map::new();
     body_map.insert(
         "refreshToken".to_string(),
@@ -397,7 +397,7 @@ pub async fn refresh_tokens(
     let answer = transport.send(req).await?;
     if answer.status == 200 {
         let authn: AuthnResult = serde_json::from_str(&answer.body)
-            .context("decoding refresh response from /cli/auth/refresh")?;
+            .context("decoding refresh response from /cli/v1/auth/refresh")?;
         return Ok(authn);
     }
 
@@ -509,7 +509,7 @@ fn unanswered(err: &anyhow::Error) -> bool {
         .is_none_or(|lane_err| lane_err.status >= 500)
 }
 
-/// `POST /cli/me` for the stored session, held to the platform's 401 rules: a
+/// `POST /cli/v1/me` for the stored session, held to the platform's 401 rules: a
 /// bearer refused as expired or unknown gets one refresh, which decides
 /// whether the session lives, and one retry; a refusal that speaks about the
 /// session means it was ended elsewhere, so the credentials file goes.
@@ -562,7 +562,7 @@ fn session_ended(store: &CredentialsStore) -> anyhow::Error {
     anyhow::Error::new(SessionEnded)
 }
 
-/// Revokes a CLI session via `POST {endpoint}/cli/sessions/{sessionRowId}/revoke`.
+/// Revokes a CLI session via `POST {endpoint}/cli/v1/sessions/{sessionRowId}/revoke`.
 pub async fn revoke_session(
     transport: &impl Transport,
     endpoint: &str,
@@ -571,7 +571,7 @@ pub async fn revoke_session(
     organization_id: Option<&str>,
 ) -> Result<()> {
     let url = format!(
-        "{}/cli/sessions/{}/revoke",
+        "{}/cli/v1/sessions/{}/revoke",
         endpoint.trim_end_matches('/'),
         session_row_id
     );

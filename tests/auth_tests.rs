@@ -737,7 +737,7 @@ async fn test_refresh_asked_again_when_unanswered() {
     let mut creds = expiring();
     store.save(&creds).unwrap();
     transport.push_error(anyhow::anyhow!(
-        "timed out waiting for https://telmoni.com/cli/auth/refresh"
+        "timed out waiting for https://telmoni.com/cli/v1/auth/refresh"
     ));
     transport.push_answer(200, FRESH_TOKENS);
     refresh_if_needed(&transport, &store, &mut creds)
@@ -763,7 +763,7 @@ async fn test_refresh_asked_again_when_unanswered() {
 
 // 7. organization label: its name, as the console shows it, whether its owner
 //    renamed it or it still has the one it was born with — never the owner's
-//    address, which /cli/me carries beside it
+//    address, which /cli/v1/me carries beside it
 #[test]
 fn test_organization_label() {
     let renamed = Organization {
@@ -902,7 +902,7 @@ async fn test_org_switch_logic() {
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
     {
         let reqs = transport.requests.lock().unwrap();
-        assert_eq!(reqs[0].url, "https://telmoni.com/cli/me");
+        assert_eq!(reqs[0].url, "https://telmoni.com/cli/v1/me");
         assert_eq!(reqs[0].organization.as_deref(), Some("org_2"));
     }
 
@@ -1248,7 +1248,7 @@ async fn test_telmoni_org_env_validation() {
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
 }
 
-// 13. Status updates cached credentials from /cli/me answer
+// 13. Status updates cached credentials from /cli/v1/me answer
 #[tokio::test]
 async fn test_status_updates_cached_credentials() {
     use telmoni_cli::commands::status;
@@ -1336,7 +1336,7 @@ async fn test_status_updates_cached_credentials() {
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
 }
 
-// 13b. Status on an organization as it was born: `/cli/me` answers it named
+// 13b. Status on an organization as it was born: `/cli/v1/me` answers it named
 //      after its holder, at the slug that name reads as. The label is that
 //      name, never the owner's address, and the slug is kept as answered.
 #[tokio::test]
@@ -1493,7 +1493,7 @@ async fn test_status_retries_on_token_expired() {
     };
     store.save(&creds).unwrap();
 
-    // 1. First /cli/me call fails with 401 token-expired
+    // 1. First /cli/v1/me call fails with 401 token-expired
     transport.push_answer(
         401,
         r#"{"type":"/errors/auth/token-expired","title":"token expired","status":401}"#,
@@ -1510,7 +1510,7 @@ async fn test_status_retries_on_token_expired() {
         }"#,
     );
 
-    // 3. Retry /cli/me succeeds with fresh token
+    // 3. Retry /cli/v1/me succeeds with fresh token
     transport.push_answer(
         200,
         r#"{
@@ -1548,7 +1548,7 @@ async fn test_status_retries_on_token_expired() {
     assert!(store.path.exists());
 }
 
-// 15. Organization wire shape: /cli/me as the platform answers it (extra fields
+// 15. Organization wire shape: /cli/v1/me as the platform answers it (extra fields
 //     ignored), and an API key reading /v1/organization
 #[tokio::test]
 async fn test_organization_wire_shape() {
@@ -1685,7 +1685,7 @@ const FOREIGN_401: &str = r#"{"error":"unauthorized"}"#;
 const FRESH_TOKENS: &str =
     r#"{"userId":"usr_1","accessToken":"fresh","refreshToken":"rt2","expiresIn":900}"#;
 
-/// `/cli/me` for `device_creds(&["org_1"], "org_1")`'s person.
+/// `/cli/v1/me` for `device_creds(&["org_1"], "org_1")`'s person.
 const ME_IN_ORG_1: &str = r#"{
     "person": { "userId": "usr_1", "email": "alice@example.com" },
     "organizations": [ { "organizationId": "org_1", "slug": "org-1", "name": "Org 1", "role": "member" } ],
@@ -1928,7 +1928,7 @@ async fn test_logout_retries_revoke_with_current_organization() {
     assert_eq!(reqs.len(), 4);
     assert_eq!(reqs[0].organization.as_deref(), Some("org_gone"));
     assert_eq!(reqs[1].organization, None);
-    assert_eq!(reqs[2].url, "https://telmoni.com/cli/me");
+    assert_eq!(reqs[2].url, "https://telmoni.com/cli/v1/me");
     assert_eq!(reqs[2].organization, None);
     assert_eq!(reqs[3].organization.as_deref(), Some("org_now"));
     assert!(!store.path.exists());
@@ -1998,7 +1998,7 @@ async fn test_reqwest_transport_refuses_cleartext_http_credentials() {
     let transport = ReqwestTransport::new().unwrap();
     let req = LaneRequest {
         method: reqwest::Method::GET,
-        url: "http://remote-insecure.example.com/cli/me".to_string(),
+        url: "http://remote-insecure.example.com/cli/v1/me".to_string(),
         bearer: Some("secret-token-123".to_string()),
         organization: None,
         json: None,
@@ -2019,7 +2019,7 @@ async fn test_reqwest_transport_refuses_cleartext_http_tokens_in_json() {
     let transport = ReqwestTransport::new().unwrap();
     let req = LaneRequest {
         method: reqwest::Method::POST,
-        url: "http://remote-insecure.example.com/cli/auth/refresh".to_string(),
+        url: "http://remote-insecure.example.com/cli/v1/auth/refresh".to_string(),
         bearer: None,
         organization: None,
         json: Some(serde_json::json!({ "refreshToken": "rt_secret" })),
@@ -2043,7 +2043,7 @@ async fn test_reqwest_transport_refuses_cleartext_http_device_start() {
     let transport = ReqwestTransport::new().unwrap();
     let req = LaneRequest {
         method: reqwest::Method::POST,
-        url: "http://remote-insecure.example.com/cli/auth/device".to_string(),
+        url: "http://remote-insecure.example.com/cli/v1/auth/device".to_string(),
         bearer: None,
         organization: None,
         json: None,
@@ -2065,19 +2065,19 @@ fn test_cleartext_http_only_to_this_machine() {
     use telmoni_cli::transport::refuse_cleartext;
 
     for allowed in [
-        "https://telmoni.com/cli/me",
-        "http://localhost:3000/cli/me",
-        "http://app.localhost:3000/cli/me",
-        "http://127.0.0.1:3000/cli/me",
-        "http://[::1]:3000/cli/me",
+        "https://telmoni.com/cli/v1/me",
+        "http://localhost:3000/cli/v1/me",
+        "http://app.localhost:3000/cli/v1/me",
+        "http://127.0.0.1:3000/cli/v1/me",
+        "http://[::1]:3000/cli/v1/me",
     ] {
         assert!(refuse_cleartext(allowed).is_ok(), "{allowed}");
     }
     for refused in [
-        "http://telmoni.com/cli/me",
-        "http://localhost.example.com/cli/me",
-        "http://127.0.0.1.example.com/cli/me",
-        "http://192.168.1.10:3000/cli/me",
+        "http://telmoni.com/cli/v1/me",
+        "http://localhost.example.com/cli/v1/me",
+        "http://127.0.0.1.example.com/cli/v1/me",
+        "http://192.168.1.10:3000/cli/v1/me",
     ] {
         assert!(refuse_cleartext(refused).is_err(), "{refused}");
     }
@@ -2091,19 +2091,19 @@ fn test_this_machine_bypasses_any_proxy() {
     use telmoni_cli::transport::bypasses_proxy;
 
     for direct in [
-        "http://localhost:3000/cli/me",
-        "https://localhost:3000/cli/me",
-        "http://app.localhost:3000/cli/me",
-        "http://127.0.0.1:3000/cli/me",
-        "http://[::1]:3000/cli/me",
+        "http://localhost:3000/cli/v1/me",
+        "https://localhost:3000/cli/v1/me",
+        "http://app.localhost:3000/cli/v1/me",
+        "http://127.0.0.1:3000/cli/v1/me",
+        "http://[::1]:3000/cli/v1/me",
     ] {
         assert!(bypasses_proxy(direct), "{direct}");
     }
     for proxied in [
-        "https://telmoni.com/cli/me",
-        "http://localhost.example.com/cli/me",
-        "http://127.0.0.1.example.com/cli/me",
-        "https://192.168.1.10:3000/cli/me",
+        "https://telmoni.com/cli/v1/me",
+        "http://localhost.example.com/cli/v1/me",
+        "http://127.0.0.1.example.com/cli/v1/me",
+        "https://192.168.1.10:3000/cli/v1/me",
         "not a url",
     ] {
         assert!(!bypasses_proxy(proxied), "{proxied}");
@@ -2462,7 +2462,7 @@ fn test_debug_never_prints_a_secret() {
     );
     let request = LaneRequest {
         method: reqwest::Method::POST,
-        url: "https://telmoni.com/cli/auth/refresh".to_string(),
+        url: "https://telmoni.com/cli/v1/auth/refresh".to_string(),
         bearer: Some("secret_access".to_string()),
         organization: Some("org_1".to_string()),
         json: Some(serde_json::json!({ "refreshToken": "secret_refresh" })),
@@ -2506,14 +2506,14 @@ fn test_debug_never_prints_a_secret() {
     }
     assert!(printed[0].contains("org_1"), "{}", printed[0]);
     assert!(
-        printed[2].contains("https://telmoni.com/cli/auth/refresh"),
+        printed[2].contains("https://telmoni.com/cli/v1/auth/refresh"),
         "{}",
         printed[2]
     );
     assert!(printed[4].contains("BCDF-GHJK"), "the user code is shown");
 }
 
-// 25. A 401 on /cli/me is read by its type. The platform failing on its own
+// 25. A 401 on /cli/v1/me is read by its type. The platform failing on its own
 //     side, which the server answers as a 503, says nothing of the session, and
 //     nor does a 401 that is not auth's: it is kept. One for an unknown
 //     bearer, which an expired one is once swept, gets the refresh that
@@ -2537,7 +2537,7 @@ async fn test_status_reads_a_401_by_its_type() {
         )
     };
 
-    // 25a. the platform failing on its own side, on /cli/me: kept, and said as
+    // 25a. the platform failing on its own side, on /cli/v1/me: kept, and said as
     //      the server says it
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(503, SERVER_UNAVAILABLE);
@@ -2561,7 +2561,7 @@ async fn test_status_reads_a_401_by_its_type() {
     status().await.unwrap_err();
     assert!(store.path.exists());
 
-    // 25d. invalid-token on /cli/me for a session that lives: one refresh, one retry
+    // 25d. invalid-token on /cli/v1/me for a session that lives: one refresh, one retry
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(401, INVALID_TOKEN);
     transport.push_answer(200, FRESH_TOKENS);
@@ -2572,14 +2572,14 @@ async fn test_status_reads_a_401_by_its_type() {
         Some("fresh")
     );
 
-    // 25e. invalid-token on /cli/me, and the refresh refused too: it has ended
+    // 25e. invalid-token on /cli/v1/me, and the refresh refused too: it has ended
     transport.push_answer(401, INVALID_TOKEN);
     transport.push_answer(401, INVALID_TOKEN);
     let err = status().await.unwrap_err();
     assert_eq!(err.to_string(), "session ended; run telmoni login");
     assert!(!store.path.exists());
 
-    // 25f. unauthenticated on /cli/me: ended, with no refresh
+    // 25f. unauthenticated on /cli/v1/me: ended, with no refresh
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_answer(401, UNAUTHENTICATED);
     let err = status().await.unwrap_err();
@@ -2594,16 +2594,16 @@ async fn test_status_reads_a_401_by_its_type() {
     assert_eq!(
         paths,
         [
-            "/cli/me",
-            "/cli/me",
-            "/cli/auth/refresh",
-            "/cli/auth/refresh",
-            "/cli/me",
-            "/cli/auth/refresh",
-            "/cli/me",
-            "/cli/me",
-            "/cli/auth/refresh",
-            "/cli/me",
+            "/cli/v1/me",
+            "/cli/v1/me",
+            "/cli/v1/auth/refresh",
+            "/cli/v1/auth/refresh",
+            "/cli/v1/me",
+            "/cli/v1/auth/refresh",
+            "/cli/v1/me",
+            "/cli/v1/me",
+            "/cli/v1/auth/refresh",
+            "/cli/v1/me",
         ]
     );
     assert_eq!(reqs[6].bearer.as_deref(), Some("fresh"));
@@ -2637,10 +2637,10 @@ async fn test_end_session_reads_a_401_by_its_type() {
     let reqs = take();
     assert_eq!(reqs.len(), 3);
     assert_eq!(reqs[0].bearer.as_deref(), Some("at"));
-    assert!(reqs[1].url.ends_with("/cli/auth/refresh"));
+    assert!(reqs[1].url.ends_with("/cli/v1/auth/refresh"));
     assert_eq!(
         reqs[2].url,
-        "https://telmoni.com/cli/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
+        "https://telmoni.com/cli/v1/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
     );
     assert_eq!(reqs[2].bearer.as_deref(), Some("fresh"));
     assert_eq!(reqs[2].organization.as_deref(), Some("org_1"));
@@ -2699,7 +2699,7 @@ async fn test_end_session_reads_a_401_by_its_type() {
 
     // 26g. no answer at all
     transport.push_error(anyhow::anyhow!(
-        "timed out waiting for https://telmoni.com/cli/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
+        "timed out waiting for https://telmoni.com/cli/v1/sessions/0192a3b4-1111-7000-8000-000000000001/revoke"
     ));
     let err = end_session(&transport, &store, &mut creds, None)
         .await
@@ -2758,15 +2758,15 @@ async fn test_network_failures_keep_credentials() {
             None,
         )
     };
-    let no_answer = || anyhow::anyhow!("timed out waiting for https://telmoni.com/cli/me");
+    let no_answer = || anyhow::anyhow!("timed out waiting for https://telmoni.com/cli/v1/me");
 
-    // 28a. /cli/me
+    // 28a. /cli/v1/me
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
     transport.push_error(no_answer());
     let err = status().await.unwrap_err();
     assert_eq!(
         err.to_string(),
-        "timed out waiting for https://telmoni.com/cli/me"
+        "timed out waiting for https://telmoni.com/cli/v1/me"
     );
     assert!(store.path.exists());
 
@@ -2846,7 +2846,7 @@ async fn device_login(transport: &MockTransport, store: &CredentialsStore) -> an
 // 29. The interactive login end to end, with the browser and the wait between
 //     polls passed in: the browser opens the URL that carries the code, the
 //     grant is polled at its interval and 5 s more after a slow_down, and the
-//     session is saved once /cli/me has answered
+//     session is saved once /cli/v1/me has answered
 #[tokio::test]
 async fn test_interactive_login() {
     use telmoni_cli::commands::login;
@@ -2907,11 +2907,11 @@ async fn test_interactive_login() {
     assert_eq!(
         paths,
         [
-            "/cli/auth/device",
-            "/cli/auth/device/poll",
-            "/cli/auth/device/poll",
-            "/cli/auth/device/poll",
-            "/cli/me",
+            "/cli/v1/auth/device",
+            "/cli/v1/auth/device/poll",
+            "/cli/v1/auth/device/poll",
+            "/cli/v1/auth/device/poll",
+            "/cli/v1/me",
         ]
     );
     assert_eq!(reqs[0].bearer, None);
@@ -3021,7 +3021,7 @@ async fn test_interactive_login_that_fails_saves_nothing() {
     assert_eq!(err.to_string(), "unauthorized");
 
     transport.push_error(anyhow::anyhow!(
-        "request to https://telmoni.com/cli/auth/device failed: Connection refused (os error 111)"
+        "request to https://telmoni.com/cli/v1/auth/device failed: Connection refused (os error 111)"
     ));
     let err = device_login(&transport, &store).await.unwrap_err();
     assert!(err.to_string().contains("Connection refused"), "{err}");
@@ -3029,7 +3029,7 @@ async fn test_interactive_login_that_fails_saves_nothing() {
     transport.push_answer(200, DEVICE_START);
     transport.push_answer(202, r#"{"status":"authorization_pending"}"#);
     transport.push_error(anyhow::anyhow!(
-        "timed out waiting for https://telmoni.com/cli/auth/device/poll"
+        "timed out waiting for https://telmoni.com/cli/v1/auth/device/poll"
     ));
     let err = device_login(&transport, &store).await.unwrap_err();
     assert!(

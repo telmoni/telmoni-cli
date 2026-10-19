@@ -45,7 +45,7 @@ impl From<&crate::auth::device::Person> for StoredPerson {
 pub struct StoredOrganization {
     /// Organization ID (`org_...`).
     pub organization_id: String,
-    /// The slug the console's paths name it by, as `/cli/me` last answered.
+    /// The slug the console's paths name it by, as `/cli/v1/me` last answered.
     pub slug: String,
     /// Organization human-readable label.
     pub label: String,
@@ -178,7 +178,7 @@ impl Credentials {
         }
     }
 
-    /// Updates stored person, organizations, and session row from `/cli/me`.
+    /// Updates stored person, organizations, and session row from `/cli/v1/me`.
     /// Without `preserve_active_org` the active organization becomes the one
     /// `/me` acted in. With it, for a request that named an organization of
     /// its own, it is kept while it is still one of the person's; one they
@@ -226,7 +226,7 @@ impl Credentials {
 
     /// The cached organization an id or a slug names. The two never look
     /// alike: a slug has no underscore, and an id always has one. A slug is
-    /// the one `/cli/me` last answered, so a URL change since is not known
+    /// the one `/cli/v1/me` last answered, so a URL change since is not known
     /// here.
     ///
     /// ⚠ Exactly, like an id. A slug is lowercase, and read loosely `Acme`
