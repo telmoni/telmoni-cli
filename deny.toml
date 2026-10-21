@@ -27,6 +27,7 @@ confidence-threshold = 0.9
 multiple-versions = "warn"
 skip = [
     { name = "syn" },
+    { crate = "base64:0.22", reason = "hyper-util 0.1.21 is on base64 0.23; reqwest 0.12 stays on 0.22" },
 ]
 wildcards = "deny"
 allow-wildcard-paths = true
