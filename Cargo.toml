@@ -6,8 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish = false
 description = "The official Telmoni CLI (`telmoni`)."
+keywords = ["telmoni", "cli", "observability", "agents"]
+categories = ["command-line-utilities"]
+# What `cargo install` builds, and nothing else of the repository.
+include = ["/src", "/README.md", "/LICENSE", "/NOTICE"]
 default-run = "telmoni"
 
 [[bin]]
@@ -27,7 +30,7 @@ members = [
 default-members = ["."]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "Apache-2.0"

@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh
 The installer fetches the latest release for Apple-silicon macOS or x86_64 Linux, checks it against the release's `SHA256SUMS`, and installs `telmoni` into `/usr/local/bin` or `~/.local/bin`. `TELMONI_VERSION` pins a release and `TELMONI_INSTALL_DIR` picks the directory. On another platform, build from source with the Rust toolchain:
 
 ```console
-cargo install --git https://github.com/telmoni/telmoni-cli.git --locked telmoni-cli
+cargo install --locked telmoni-cli
 ```
 
 Each release's archives and `install.sh` also carry build provenance, signed through Sigstore for the release workflow; with the GitHub CLI you can check a download against it:
