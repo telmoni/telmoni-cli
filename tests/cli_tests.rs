@@ -177,7 +177,7 @@ fn configuration_file_through_the_binary() {
 
     let out = sandbox.run(&["config", "list"], &[]);
     assert!(
-        stdout(&out).contains("endpoint:       https://config.example"),
+        stdout(&out).contains("endpoint:        https://config.example"),
         "{}",
         stdout(&out)
     );
@@ -359,6 +359,72 @@ fn a_key_for_one_command() {
         stderr(&out)
     );
     assert!(!saved(&creds));
+}
+
+// Nobody is asked where nobody can answer: with no terminal, as on a CI
+// runner, a key in TELMONI_API_KEY is used even where the answer kept for it
+// says no, under --json too. `config` answers for the key now in the
+// variable, keeps its digest and never the key, and lists the answer only
+// while the variable holds a key.
+#[test]
+fn a_key_is_used_unasked_where_nobody_can_answer() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.telmoni_dir().join("config.json");
+    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+    let key = ("TELMONI_API_KEY", "telmoni_from_env");
+
+    let out = sandbox.run(&["config", "set", "use_api_key_env", "false"], &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("TELMONI_API_KEY, which is not set"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run(&["config", "set", "use_api_key_env", "false"], &[key]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.contains("647c77194659049b8ea5897fcce18f01cf6d076edd6c200655ff7853e3b922a9"),
+        "{written}"
+    );
+    assert!(!written.contains("telmoni_from_env"), "{written}");
+
+    let out = sandbox.run(&["config", "get", "use_api_key_env"], &[key]);
+    assert_eq!(stdout(&out), "false\n");
+    let out = sandbox.run(&["config", "list"], &[key]);
+    assert!(
+        stdout(&out).contains("use_api_key_env: false"),
+        "{}",
+        stdout(&out)
+    );
+    let out = sandbox.run(&["config", "list"], &[]);
+    assert!(
+        !stdout(&out).contains("use_api_key_env"),
+        "{}",
+        stdout(&out)
+    );
+
+    for args in [&["status"][..], &["status", "--json"][..]] {
+        let out = sandbox.run(args, &[endpoint, key]);
+        assert_eq!(out.status.code(), Some(1));
+        // The refused connection, not "Not signed in", is what stops it.
+        assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+        assert!(!stderr(&out).contains("Use it ahead"), "{}", stderr(&out));
+        assert!(
+            !stderr(&out).contains("telmoni_from_env"),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    let out = sandbox.run(&["logout"], &[endpoint, key]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("note: TELMONI_API_KEY is set"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 // `telmoni run` wraps a command: its output and its exit code are the

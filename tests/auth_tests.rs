@@ -1046,8 +1046,7 @@ fn test_endpoint_precedence() {
 
     let config = Config {
         endpoint: Some("https://from-config.example/".to_string()),
-        output_format: None,
-        api_key_helper: None,
+        ..Config::default()
     };
     assert_eq!(
         resolve_endpoint(
@@ -3053,12 +3052,14 @@ fn test_configuration_file() {
     let path = dir.join("telmoni").join("config.json");
 
     assert_eq!(load_config(&path).unwrap().endpoint, None);
-    assert_eq!(get_config_value(&path, "endpoint").unwrap(), None);
+    assert_eq!(get_config_value(&path, "endpoint", None).unwrap(), None);
 
-    set_config_value(&path, "endpoint", "https://config.example").unwrap();
-    set_config_value(&path, "output_format", "json").unwrap();
+    set_config_value(&path, "endpoint", "https://config.example", None).unwrap();
+    set_config_value(&path, "output_format", "json", None).unwrap();
     assert_eq!(
-        get_config_value(&path, "endpoint").unwrap().as_deref(),
+        get_config_value(&path, "endpoint", None)
+            .unwrap()
+            .as_deref(),
         Some("https://config.example")
     );
     assert_eq!(
@@ -3067,13 +3068,13 @@ fn test_configuration_file() {
     );
 
     let before = std::fs::read_to_string(&path).unwrap();
-    let err = set_config_value(&path, "colour", "blue").unwrap_err();
+    let err = set_config_value(&path, "colour", "blue", None).unwrap_err();
     assert!(
         err.to_string()
             .contains("unknown configuration key 'colour'"),
         "{err}"
     );
-    assert!(get_config_value(&path, "colour").is_err());
+    assert!(get_config_value(&path, "colour", None).is_err());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
 
     std::fs::write(&path, "{ not json").unwrap();
@@ -3208,4 +3209,122 @@ async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
     assert_eq!(reqs[0].url, "https://env.example/v1/organization");
     assert_eq!(reqs[0].bearer.as_deref(), Some("telmoni_supplied"));
     assert_eq!(store.load().unwrap(), Some(saved));
+}
+
+// 36. TELMONI_API_KEY at a terminal: a new key is asked about, and the answer
+//     kept for it holds, by the trimmed key's SHA-256; a key never answered
+//     for is asked about again. Where nobody can be asked — no terminal, or
+//     --json — it is used whatever was answered, and a value that is no API
+//     key is never asked about, for supplied_key to refuse
+#[test]
+fn test_the_variables_key_is_asked_about_once_at_a_terminal() {
+    use std::collections::BTreeMap;
+    use telmoni_cli::auth::{EnvKeyUse, env_key_digest, env_key_use};
+
+    let digest = "bd93552844211d9d3bc3987cc0848a2ad825b18748509203deb8540c41b52c54";
+    assert_eq!(env_key_digest(" telmoni_abc\n").as_deref(), Some(digest));
+    assert_eq!(env_key_digest("sk_live_wrong"), None);
+
+    let mut answers = BTreeMap::new();
+    assert_eq!(
+        env_key_use("telmoni_abc", &answers, true, false),
+        EnvKeyUse::Ask
+    );
+    answers.insert(digest.to_string(), true);
+    assert_eq!(
+        env_key_use(" telmoni_abc ", &answers, true, false),
+        EnvKeyUse::Use
+    );
+    answers.insert(digest.to_string(), false);
+    assert_eq!(
+        env_key_use("telmoni_abc", &answers, true, false),
+        EnvKeyUse::PassOver
+    );
+    assert_eq!(
+        env_key_use("telmoni_rotated", &answers, true, false),
+        EnvKeyUse::Ask
+    );
+
+    for (at_terminal, json) in [(false, false), (true, true), (false, true)] {
+        for key in ["telmoni_abc", "telmoni_rotated"] {
+            assert_eq!(
+                env_key_use(key, &answers, at_terminal, json),
+                EnvKeyUse::Use,
+                "{key} at_terminal={at_terminal} json={json}"
+            );
+        }
+    }
+    assert_eq!(
+        env_key_use("sk_live_wrong", &BTreeMap::new(), true, false),
+        EnvKeyUse::Use
+    );
+}
+
+// 37. use_api_key_env answers for the key now in TELMONI_API_KEY: kept by its
+//     digest, never the key, one answer a key; with no key in the variable,
+//     or a value that is not true or false, it is refused by name and the
+//     file is left as it was
+#[test]
+fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
+    use telmoni_cli::auth::env_key_digest;
+    use telmoni_cli::config::{
+        get_config_value, load_config, set_api_key_answer, set_config_value,
+    };
+
+    let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("telmoni-answers-{}-{}", std::process::id(), n));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("telmoni").join("config.json");
+    let key = Some(" telmoni_kept ");
+
+    assert_eq!(
+        get_config_value(&path, "use_api_key_env", key).unwrap(),
+        None
+    );
+    set_config_value(&path, "use_api_key_env", "true", key).unwrap();
+    assert_eq!(
+        get_config_value(&path, "use_api_key_env", Some("telmoni_kept"))
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        get_config_value(&path, "use_api_key_env", Some("telmoni_other")).unwrap(),
+        None
+    );
+    set_api_key_answer(&path, "telmoni_kept", false).unwrap();
+    let config = load_config(&path).unwrap();
+    assert_eq!(config.api_key_answers.len(), 1);
+    assert_eq!(
+        config
+            .api_key_answers
+            .get(&env_key_digest("telmoni_kept").unwrap()),
+        Some(&false)
+    );
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("api_key_answers"), "{written}");
+    assert!(!written.contains("telmoni_kept"), "{written}");
+
+    for (value, env_key, refusal) in [
+        ("true", None, "TELMONI_API_KEY, which is not set"),
+        (
+            "true",
+            Some("sk_live_wrong"),
+            "TELMONI_API_KEY gives no API key",
+        ),
+        ("yes", key, "use_api_key_env is true or false"),
+    ] {
+        let err = set_config_value(&path, "use_api_key_env", value, env_key)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(refusal), "{err}");
+        assert!(!err.contains("sk_live_wrong"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
+    }
+    let err = set_config_value(&path, "colour", "blue", None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.ends_with("use_api_key_env"), "{err}");
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

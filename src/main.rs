@@ -7,9 +7,9 @@ use std::io::IsTerminal;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
 
-use telmoni_cli::auth::{CredentialsStore, run_helper, supplied_key};
+use telmoni_cli::auth::{CredentialsStore, EnvKeyUse, env_key_use, run_helper, supplied_key};
 use telmoni_cli::commands::{config_cmd, login, logout, org, run, status};
-use telmoni_cli::config::{Config, load_config, resolve_endpoint};
+use telmoni_cli::config::{Config, load_config, resolve_endpoint, set_api_key_answer};
 use telmoni_cli::transport::ReqwestTransport;
 
 #[derive(Parser)]
@@ -110,11 +110,17 @@ async fn main() {
     let endpoint_env = env_var("TELMONI_ENDPOINT");
     let api_key_env = env_var("TELMONI_API_KEY");
     let ping_key_env = env_var("TELMONI_PING_KEY");
+    // Somebody to ask: a person types on one and reads the other.
+    let at_terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
 
     // These manage the saved login, which a command acting with a key does
-    // not read while the variable is set; said once, so a person who signs
-    // in or out is not surprised by what `status` shows next.
-    if api_key_env.is_some() && matches!(cli.cmd, Cmd::Login(_) | Cmd::Logout(_) | Cmd::Org(_)) {
+    // not read while it uses the variable's; said once, so a person who signs
+    // in or out is not surprised by what `status` shows next. A key still to
+    // be asked about goes unsaid: `status` asks.
+    if let Some(key) = api_key_env.as_deref()
+        && matches!(cli.cmd, Cmd::Login(_) | Cmd::Logout(_) | Cmd::Org(_))
+        && env_key_use(key, &config.api_key_answers, at_terminal, false) == EnvKeyUse::Use
+    {
         eprintln!(
             "note: TELMONI_API_KEY is set, and commands that act with a key use it before the \
              saved login"
@@ -137,7 +143,14 @@ async fn main() {
         }
         Cmd::Logout(args) => logout::execute(args, &transport, &store, telmoni_org_env).await,
         Cmd::Status(args) | Cmd::Whoami(args) => {
-            match supplied_key(api_key_env, config.api_key_helper.as_deref(), run_helper).await {
+            let env_key = api_key_env.and_then(|key| {
+                match env_key_use(&key, &config.api_key_answers, at_terminal, args.json) {
+                    EnvKeyUse::Use => Some(key),
+                    EnvKeyUse::PassOver => None,
+                    EnvKeyUse::Ask => ask_to_use(&key, &config_path).then_some(key),
+                }
+            });
+            match supplied_key(env_key, config.api_key_helper.as_deref(), run_helper).await {
                 Ok(Some(key)) => {
                     let endpoint = resolve_endpoint(None, endpoint_env.as_deref(), &config);
                     status::execute_with_key(args, &transport, &key, &endpoint).await
@@ -157,7 +170,7 @@ async fn main() {
             }
         }
         Cmd::Org(cmd) => org::execute(cmd, &transport, &store).await,
-        Cmd::Config(args) => config_cmd::execute(args, &config_path),
+        Cmd::Config(args) => config_cmd::execute(args, &config_path, api_key_env.as_deref()),
         Cmd::Run(args) => {
             let endpoint = resolve_endpoint(None, endpoint_env.as_deref(), &config);
             run::execute(
@@ -184,6 +197,31 @@ fn exit_with(code: i32) {
     if code != 0 {
         std::process::exit(code);
     }
+}
+
+/// Asks the person at the terminal whether to act with `key`, from
+/// `TELMONI_API_KEY`, ahead of the saved login, and keeps the answer for it.
+/// No answer at all, as at the end of input, is a no for this command alone.
+fn ask_to_use(key: &str, config_path: &std::path::Path) -> bool {
+    use std::io::BufRead;
+
+    // ⚠ Never the key, nor any part of it.
+    eprint!("TELMONI_API_KEY holds an API key. Use it ahead of the saved login? [y/N] ");
+    let mut line = String::new();
+    if !matches!(std::io::stdin().lock().read_line(&mut line), Ok(read) if read > 0) {
+        eprintln!();
+        return false;
+    }
+    let answer = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+    match set_api_key_answer(config_path, key, answer) {
+        Ok(()) => eprintln!(
+            "note: kept for this key; telmoni config set use_api_key_env true|false changes it"
+        ),
+        Err(err) => {
+            eprintln!("note: the answer could not be kept ({err}); you will be asked again");
+        }
+    }
+    answer
 }
 
 /// The key `login --with-key` saves, from standard input. A terminal is

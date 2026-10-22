@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
+use crate::auth::key::env_key_digest;
 use crate::config::{DEFAULT_TELMONI_ENDPOINT, get_config_value, load_config, set_config_value};
 
 /// Arguments for `telmoni config`.
@@ -18,12 +19,12 @@ pub struct ConfigArgs {
 pub enum ConfigSubcommand {
     /// Get a configuration parameter.
     Get {
-        /// The setting key (endpoint, output_format, api_key_helper).
+        /// The setting key (endpoint, output_format, api_key_helper, use_api_key_env).
         key: String,
     },
     /// Set a configuration parameter.
     Set {
-        /// The setting key (endpoint, output_format, api_key_helper).
+        /// The setting key (endpoint, output_format, api_key_helper, use_api_key_env).
         key: String,
         /// The value to assign.
         value: String,
@@ -33,35 +34,51 @@ pub enum ConfigSubcommand {
 }
 
 /// Executes the `telmoni config` command against the configuration file at
-/// `path`.
-pub fn execute(args: ConfigArgs, path: &Path) -> Result<()> {
+/// `path`. `env_key` is `TELMONI_API_KEY` as `main` read it, the key
+/// `use_api_key_env` answers for.
+pub fn execute(args: ConfigArgs, path: &Path, env_key: Option<&str>) -> Result<()> {
     match args.command {
-        ConfigSubcommand::Get { key } => match get_config_value(path, &key)? {
+        ConfigSubcommand::Get { key } => match get_config_value(path, &key, env_key)? {
             Some(val) => println!("{val}"),
             None => println!("(not set)"),
         },
         ConfigSubcommand::Set { key, value } => {
-            set_config_value(path, &key, &value)?;
-            println!("✓ Set {key} = {value}");
+            set_config_value(path, &key, &value, env_key)?;
+            if key == "use_api_key_env" {
+                println!("✓ Set {key} = {value}, for the key now in TELMONI_API_KEY");
+            } else {
+                println!("✓ Set {key} = {value}");
+            }
         }
         ConfigSubcommand::List => {
             let config = load_config(path)?;
             println!("Telmoni CLI Configuration");
             println!("-------------------------");
             println!(
-                "  endpoint:       {}",
+                "  endpoint:        {}",
                 config
                     .endpoint
                     .unwrap_or_else(|| format!("(default: {DEFAULT_TELMONI_ENDPOINT})"))
             );
             println!(
-                "  output_format:  {}",
+                "  output_format:   {}",
                 config.output_format.as_deref().unwrap_or("(default: text)")
             );
             println!(
-                "  api_key_helper: {}",
+                "  api_key_helper:  {}",
                 config.api_key_helper.as_deref().unwrap_or("(not set)")
             );
+            // Only while the variable holds a key, as Claude Code shows its
+            // toggle.
+            if let Some(digest) = env_key.and_then(env_key_digest) {
+                println!(
+                    "  use_api_key_env: {}",
+                    config
+                        .api_key_answers
+                        .get(&digest)
+                        .map_or("(not set)", |&answer| if answer { "true" } else { "false" })
+                );
+            }
         }
     }
     Ok(())

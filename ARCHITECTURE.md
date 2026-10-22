@@ -140,9 +140,9 @@ flowchart TB
 | `main.rs` | The only place that reads the environment and standard input: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1 | — |
 | `commands/` | One module per command, each handed its inputs as values | — |
 | `auth/device.rs` | The device flow, refresh, and the reading of a 401 by its type | — |
-| `auth/key.rs` | A key supplied for one command: `TELMONI_API_KEY`, else what `api_key_helper` prints, checked by its shape and never saved | — |
+| `auth/key.rs` | A key supplied for one command: `TELMONI_API_KEY`, else what `api_key_helper` prints, checked by its shape and never saved; and whether the variable's key is used, passed over, or asked about first | — |
 | `auth/storage.rs` | The saved login: the macOS Keychain on a Mac, else the credentials file, read leniently and written atomically | The Keychain item `telmoni`, `credentials.json` |
-| `config.rs` | The configuration file, and where the base URL comes from | `config.json` |
+| `config.rs` | The configuration file, the answers it keeps about `TELMONI_API_KEY`'s keys, and where the base URL comes from | `config.json` |
 | `client.rs` | The one `/v1` call, under an API key | — |
 | `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes | — |
 | `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — |
@@ -156,7 +156,9 @@ flowchart TB
 
 ### A key for one command
 
-`status` with `TELMONI_API_KEY` set, or else with `api_key_helper` configured, asks `/v1` with that key, at the endpoint `TELMONI_ENDPOINT`, the configuration file or the default names, and neither reads nor writes the saved login. A blank variable is no variable. The helper runs through `sh` with nothing on its standard input and 30 seconds to answer; what it prints is the key, never shown, and its stderr is the person's. `login`, `logout` and `org`, which manage the saved login, say once that the variable outranks it.
+`status` with `TELMONI_API_KEY` set, or else with `api_key_helper` configured, asks `/v1` with that key, at the endpoint `TELMONI_ENDPOINT`, the configuration file or the default names, and neither reads nor writes the saved login. A blank variable is no variable. The helper runs through `sh` with nothing on its standard input and 30 seconds to answer; what it prints is the key, never shown, and its stderr is the person's. `login`, `logout` and `org`, which manage the saved login, say once that the variable outranks it, unless its key is still to be asked about or was declined.
+
+At a terminal — standard input and standard error both one, and no `--json` — the variable's key is used only once the person said so, as Claude Code asks of `ANTHROPIC_API_KEY`: `status` asks on stderr, "TELMONI_API_KEY holds an API key. Use it ahead of the saved login? [y/N]", never showing the key or any part of it, and keeps the answer in `config.json` under `api_key_answers`, by the trimmed key's SHA-256, so a new key is asked about again; no answer at all, at the end of input, passes it over for that command alone. A key declined is passed over as if the variable were unset, the helper then standing in where one is configured, and `config set use_api_key_env true|false` answers for the key the variable holds now. Anywhere else — CI, a pipe, `--json` — the key is used unasked whatever was answered, as Claude Code uses its key under `-p`. The choice is `env_key_use` (`auth/key.rs`); the question, which reads standard input, is `main.rs`'s.
 
 ### A job under a monitor
 
@@ -181,7 +183,7 @@ The CLI's state is two files in the person's configuration directory, `~/Library
 | File | Holds | Written |
 |---|---|---|
 | `credentials.json`, or on a Mac the Keychain item | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`. On a Mac to the Keychain, as a generic password under the service `telmoni` with the file's path as its account, the file only while the Keychain refuses, as a locked one does over SSH and one that would put up a dialog does when stderr is no terminal; with both, the newer is read, and a save the Keychain takes deletes the file. Elsewhere the file, atomically, mode `0600`, not encrypted |
-| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, and an output format no command reads yet | By `config set`, a plain write: it holds no secret, the helper's command and never its key |
+| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, a plain write: it holds no secret, the helper's command and never its key, a key's digest and never the key |
 
 A copy that cannot be read or parsed reads as signed out, or as the default configuration, with a note that never quotes it, and a missing one silently. The `config` commands alone fail on a `config.json` that does not parse.
 
@@ -190,7 +192,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 - **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin or the console beside it.
 - **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy.
 - **Every request has a deadline**, 30 seconds in all and 10 to connect, so a stalled host fails in seconds rather than hanging.
-- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, a key refused by its shape is named by where it came from, never by its value, saved credentials that do not parse are logged under `-v` by line and column, never by their contents, and a ping key is cut out of every address a log line or an error shows, by its place on the lane and by its shape (`transport::loggable_url`), as the platform cuts it from its own log.
+- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, the question about `TELMONI_API_KEY` names the variable and never its key, a key refused by its shape is named by where it came from, never by its value, saved credentials that do not parse are logged under `-v` by line and column, never by their contents, and a ping key is cut out of every address a log line or an error shows, by its place on the lane and by its shape (`transport::loggable_url`), as the platform cuts it from its own log.
 - **An API key never rides a command line.** `login --with-key` reads standard input and refuses a terminal, so no key reaches `ps`, shell history or a CI log, and `TELMONI_API_KEY` is read once, at the edge, and never saved. A ping key may (`run --ping-key`): made for crontab lines, it can fake a ping and nothing more.
 - **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory.
 - **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow.
@@ -215,7 +217,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **A crash mid-write** | The previous credentials file, whole | — |
 | **A Keychain that would ask, over SSH or with stderr no terminal** | The login kept in the file instead, with a note; one saved in the Keychain unread, with a note | Unlocking it, the command at the Mac's own terminal, which may ask, or signing in again |
 | **A failing `api_key_helper`** | Its stderr, then `api_key_helper failed`, printed nothing, or did not answer; no request | The helper, or `config set api_key_helper` |
-| **A file that does not parse** | Signed out, or the default configuration, with a note; the `config` commands fail on it | `telmoni login` for the credentials; mending or deleting `config.json` |
+| **A file that does not parse** | Signed out, or the default configuration, with a note; the `config` commands fail on it, and at a terminal the question about `TELMONI_API_KEY` comes back every time, its answer unkept | `telmoni login` for the credentials; mending or deleting `config.json` |
 | **No configuration directory** | The command says so and exits 1 | The environment |
 | **A browser that cannot open** | A note; the code and the URL are printed already | Any browser |
 | **An organization's URL changed** | The new slug refused until the cache is rewritten; the old one held to the platform's answer by `status` and `org switch` | `telmoni status` |
@@ -237,6 +239,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **The login in the macOS Keychain on a Mac, else a `0600` file** | The Keychain encrypts it and asks before another program reads it; a container, a CI runner or a locked Keychain over SSH has none to ask, so the file, written atomically, stands in | On Linux, whoever can read the person's files can read the tokens; a Mac may ask again after the binary is replaced |
 | **Keychain dialogs only when stderr is a terminal** | A dialog no one answers never returns, and a macOS CI runner has a screen with no one at it; at a terminal a person answers the unlock, or the dialog a replaced binary needs to read the item | Without a terminal, a dialog the Keychain would need is a refusal: the login goes to the file, and one a replaced binary would have to ask for reads as signed out |
 | **A key for one command from `TELMONI_API_KEY` or a helper, ahead of the saved login** | A CI job or a secret manager needs no `login` and leaves no key on disk, as `GH_TOKEN` and `ANTHROPIC_API_KEY` work | A key in the environment reaches every process the shell starts |
+| **`TELMONI_API_KEY` approved once a key, at a terminal** | A key left exported in a shell would otherwise stand in for the person's own login without a word; Claude Code asks once of `ANTHROPIC_API_KEY` for the same reason, and uses it unasked under `-p`, where nobody can answer. Kept by its SHA-256, so a new key is asked about again and the file holds no key | A `--json` run, or one with standard input or error redirected, uses a key the person declined; the file confirms a guessed key |
 | **A blank variable is no variable** | An exported empty `TELMONI_API_KEY` would otherwise stand in for the saved login with no key at all; Anthropic's SDKs tell people to `unset` such a variable, and this needs no such rule | `TELMONI_API_KEY=""` cannot name an empty key |
 | **`login --with-key` reads standard input, never an argument** | A key on the command line reaches `ps`, shell history and CI logs | A key typed at a terminal is refused: it is piped, or read from a file |
 | **The environment at the edge, a `.env` in debug builds only** | A released binary run in somebody else's checkout cannot take its endpoint or key | A `.env` does nothing for a released binary |
@@ -262,5 +265,5 @@ The ones that shape the design, each kept here until it is closed:
 - **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless.
 - **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor.
 - **`run` relays no signal:** one sent to the wrapper alone ends it and leaves the command running, its run open on the platform until the monitor's next run or its timeouts end it.
-- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, a signed-in run of the binary, and `run`'s pings against a live lane.
+- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, a signed-in run of the binary, `run`'s pings against a live lane, and the question `status` asks at a terminal, since no test runs at one.
 - **`output_format` is accepted and stored**, and no command reads it.

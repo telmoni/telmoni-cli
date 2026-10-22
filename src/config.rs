@@ -1,11 +1,13 @@
 //! Configuration management for the Telmoni CLI.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::auth::key::env_key_digest;
 use crate::transport::is_loopback_host;
 
 /// Default Telmoni API endpoint: the machine host, where the server serves
@@ -22,7 +24,15 @@ pub struct Config {
     /// read, so the key is fetched fresh and never saved. The command, not
     /// the key, is what this file holds.
     pub api_key_helper: Option<String>,
+    /// Whether to act with a key in `TELMONI_API_KEY` ahead of the saved
+    /// login, as a person at a terminal answered, by the key's digest
+    /// (`env_key_digest`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub api_key_answers: BTreeMap<String, bool>,
 }
+
+/// The keys `config get` and `config set` take, for the refusal of any other.
+const KEYS: &str = "endpoint, output_format, api_key_helper, use_api_key_env";
 
 /// Normalizes an endpoint string by trimming whitespace, stripping trailing slashes,
 /// and ensuring an `http://` (for this machine) or `https://` scheme.
@@ -101,30 +111,56 @@ pub fn save_config(path: &Path, config: &Config) -> Result<()> {
 }
 
 /// Gets a specific config key's value from the file at `path`.
-pub fn get_config_value(path: &Path, key: &str) -> Result<Option<String>> {
+/// `use_api_key_env` is the answer kept for `env_key`, the key now in
+/// `TELMONI_API_KEY`.
+pub fn get_config_value(path: &Path, key: &str, env_key: Option<&str>) -> Result<Option<String>> {
     let config = load_config(path)?;
     match key {
         "endpoint" => Ok(config.endpoint),
         "output_format" => Ok(config.output_format),
         "api_key_helper" => Ok(config.api_key_helper),
-        _ => bail!(
-            "unknown configuration key '{key}'. Valid keys: endpoint, output_format, \
-             api_key_helper"
-        ),
+        "use_api_key_env" => Ok(config
+            .api_key_answers
+            .get(&answer_slot(env_key)?)
+            .map(bool::to_string)),
+        _ => bail!("unknown configuration key '{key}'. Valid keys: {KEYS}"),
     }
 }
 
 /// Sets a specific config key's value in the file at `path`.
-pub fn set_config_value(path: &Path, key: &str, value: &str) -> Result<()> {
+/// `use_api_key_env` answers for `env_key`, the key now in `TELMONI_API_KEY`.
+pub fn set_config_value(path: &Path, key: &str, value: &str, env_key: Option<&str>) -> Result<()> {
     let mut config = load_config(path)?;
     match key {
         "endpoint" => config.endpoint = Some(value.to_string()),
         "output_format" => config.output_format = Some(value.to_string()),
         "api_key_helper" => config.api_key_helper = Some(value.to_string()),
-        _ => bail!(
-            "unknown configuration key '{key}'. Valid keys: endpoint, output_format, \
-             api_key_helper"
-        ),
+        "use_api_key_env" => {
+            let answer = match value {
+                "true" => true,
+                "false" => false,
+                _ => bail!("use_api_key_env is true or false"),
+            };
+            config.api_key_answers.insert(answer_slot(env_key)?, answer);
+        }
+        _ => bail!("unknown configuration key '{key}'. Valid keys: {KEYS}"),
     }
     save_config(path, &config)
+}
+
+/// Keeps `answer`, whether to act with `env_key` ahead of the saved login,
+/// in the file at `path`.
+pub fn set_api_key_answer(path: &Path, env_key: &str, answer: bool) -> Result<()> {
+    set_config_value(path, "use_api_key_env", &answer.to_string(), Some(env_key))
+}
+
+/// The digest the answer for `env_key` is kept under; an error, naming the
+/// variable and never its value, when it holds no API key.
+fn answer_slot(env_key: Option<&str>) -> Result<String> {
+    let Some(value) = env_key else {
+        bail!("use_api_key_env answers for the key in TELMONI_API_KEY, which is not set");
+    };
+    env_key_digest(value).context(
+        "TELMONI_API_KEY gives no API key: an API key starts with telmoni_ and has no spaces",
+    )
 }

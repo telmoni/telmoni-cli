@@ -1,8 +1,11 @@
 //! An API key supplied for one command: `TELMONI_API_KEY`, else what the
 //! configured `api_key_helper` prints. Either is used in place of the saved
 //! login and never saved, so a CI job or a secret manager needs no
-//! `telmoni login` and leaves no key on disk.
+//! `telmoni login` and leaves no key on disk; at a terminal, the variable's
+//! key only once a person said so.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -86,6 +89,58 @@ where
         );
     }
     Ok(Some(SuppliedKey { key, source }))
+}
+
+/// What a command that acts with a key does with the one in
+/// `TELMONI_API_KEY`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvKeyUse {
+    /// Act with it.
+    Use,
+    /// Pass it over, as if the variable were unset.
+    PassOver,
+    /// Ask the person at the terminal first.
+    Ask,
+}
+
+/// Whether to act with `value`, the variable's key, ahead of the saved
+/// login: at a terminal without `--json`, as `answers` holds the person's
+/// answer for it, and asked when it holds none; anywhere else unasked, as
+/// Claude Code uses `ANTHROPIC_API_KEY` under `-p`. A value that is no API
+/// key is used too, for `supplied_key` to refuse by name.
+#[must_use]
+pub fn env_key_use(
+    value: &str,
+    answers: &BTreeMap<String, bool>,
+    at_terminal: bool,
+    json: bool,
+) -> EnvKeyUse {
+    if !at_terminal || json {
+        return EnvKeyUse::Use;
+    }
+    let Some(digest) = env_key_digest(value) else {
+        return EnvKeyUse::Use;
+    };
+    match answers.get(&digest) {
+        Some(true) => EnvKeyUse::Use,
+        Some(false) => EnvKeyUse::PassOver,
+        None => EnvKeyUse::Ask,
+    }
+}
+
+/// What an answer about `value`, the variable's key, is kept under: the
+/// trimmed key's SHA-256 in lowercase hex, so a new key is asked about again
+/// and the configuration file never holds one. `None` for no API key.
+#[must_use]
+pub fn env_key_digest(value: &str) -> Option<String> {
+    let key = value.trim();
+    validate_api_key(key).ok()?;
+    let digest = ring::digest::digest(&ring::digest::SHA256, key.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Some(hex)
 }
 
 /// How long the helper may take: a secret manager that has to ask for a
