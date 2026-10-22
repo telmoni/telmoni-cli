@@ -4,7 +4,7 @@ The Telmoni CLI on one page: what it is for, what it is made of, how a command r
 
 The platform the CLI talks to has a design of its own, `ARCHITECTURE.md` in [`telmoni/telmoni`](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md), checked out beside this repo as `../telmoni/ARCHITECTURE.md`: its door for machines, the `/cli` lanes, `/me`, `/v1` and sessions. This page covers the client. The SDKs, which record an agent's runs and send them to the platform's ingest, are the platform's too, under `sdk/` in that repository, with their contract and parity table on its page (*The SDKs*).
 
-**Where it stands:** version 0.1.0, on crates.io as `telmoni-cli`, and no release has been cut, so `install.sh` has nothing to fetch yet and the CLI is built from source with `cargo install`. It signs in and out, says who it is signed in as, and chooses an organization. Beyond its own session it changes nothing on the platform, except that `/cli/v1/me` makes a first organization for a person who belongs to none, as a console sign-in does.
+**Where it stands:** version 0.1.0, on crates.io as `telmoni-cli`, and no release has been cut, so `install.sh` has nothing to fetch yet and the CLI is built from source with `cargo install`. It signs in and out, says who it is signed in as, chooses an organization, and runs a job under a monitor. Beyond its own session it changes nothing on the platform, except that `/cli/v1/me` makes a first organization for a person who belongs to none, as a console sign-in does, and that a run's first ping makes the monitor its slug names, paused as new, as the platform has every first ping do.
 
 ## Contents
 
@@ -27,7 +27,8 @@ The CLI, `telmoni`, is how a person or a machine uses Telmoni from a terminal. T
 - signs a person in with a code approved in any browser, or a machine in with an API key;
 - says who it is signed in as, and in which organization;
 - lists the person's organizations, and chooses the one it acts in;
-- keeps a configuration file: the endpoint to sign in against.
+- keeps a configuration file: the endpoint to sign in against;
+- runs a command under a monitor: a ping at its start and at its end, under the project's ping key.
 
 It is **one Rust binary**, a thin shell over a library the tests drive directly, and a **client of the platform and of nothing else**: nothing here runs on a server, holds a database or verifies a token.
 
@@ -45,7 +46,8 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 | **It talks to one platform, and to nothing else** | One base URL, `https://api.telmoni.com`, the machine host, unless `TELMONI_ENDPOINT` names another, and nothing in `src/` calls another host; plain HTTP only to a loopback endpoint; no redirect followed; the one page it opens unasked is the device page on that host or on the console beside it (`same_deployment` in `src/commands/login.rs`) |
 | **It works where no browser can reach it** | The device flow: the person approves a code in any browser, on any machine, and nothing listens here |
 | **A secret is never shown** | No token, refresh token, device code or API key in output or logs, and `Debug` written by hand on every struct that holds one |
-| **A key never rides a command line, and need not be saved** | `login --with-key` reads it from standard input; `TELMONI_API_KEY`, or what `api_key_helper` prints, supplies one for a single command and is never saved |
+| **An API key never rides a command line, and need not be saved** | `login --with-key` reads it from standard input; `TELMONI_API_KEY`, or what `api_key_helper` prints, supplies one for a single command and is never saved. A ping key may ride one (`run --ping-key`): it lives on crontab lines by design, and can fake a ping and nothing more |
+| **A job is never failed by its monitor** | `run` keeps the command's streams and exit code as its own; a Telmoni that does not answer, or refuses a ping, is a note on stderr |
 | **A crash or a blip never loses the session** | The saved login written atomically, to the Keychain or the file; a 5xx or a dropped connection never deletes it; a refresh whose answer was lost asked again once |
 | **The platform decides when a session ends** | A 401 read by its problem type, one refresh deciding a bearer refused as expired or unknown |
 | **What a checkout holds cannot redirect it** | The environment read only at the edge, a `.env` only in debug builds, and the configuration never from the working directory |
@@ -81,8 +83,10 @@ flowchart LR
     Console["Console: the /auth/device page"]
   end
   GitHub["GitHub: releases and their provenance"]
+  Job["A job: a cron line's command"]
   Person --> CLI
   Machine --> CLI
+  CLI -->|"runs, under a monitor"| Job
   CLI -->|"HTTPS"| Server
   CLI -.->|"or through"| Proxy
   Proxy -.-> Server
@@ -95,8 +99,9 @@ flowchart LR
 |---|---|---|
 | **A person** | Who signs in, at a terminal, over SSH or in a container | Commands; the user code and the URL on stdout |
 | **A script or CI job** | Whoever holds an organization's API key | The key in `TELMONI_API_KEY` or from `api_key_helper` for each command, or saved once by `login --with-key`; then `/v1` reads |
+| **A job** | The command `run` wraps: a cron job, a queue consumer, a script | Its standard streams, untouched, and its exit code, which the CLI exits with |
 | **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI |
-| **The platform's server** | The one host the CLI calls, `api.telmoni.com` on the hosted service: the `/cli/v1` lanes for a session, `/v1` for a key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
+| **The platform's server** | The one host the CLI calls, `api.telmoni.com` on the hosted service: the `/cli/v1` lanes for a session, `/v1` for a key, `/ping/v1` for a run's start and its end under a ping key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
 | **The platform's console** | Where the person approves the code; the CLI never calls it, and opens its device page only when it is on the endpoint's own origin or stands beside the machine host | Nothing from the CLI; the page's address, printed |
 | **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct |
 | **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` |
@@ -108,7 +113,7 @@ The binary's modules, in `src/`, each arrow one building or calling another; the
 ```mermaid
 flowchart TB
   Main["main.rs: the environment, standard input, the paths, dispatch"]
-  Cmds["commands/: login, logout, status, org, config"]
+  Cmds["commands/: login, logout, status, org, config, run"]
   Device["auth/device.rs: the device flow, refresh, the 401 rules"]
   Key["auth/key.rs: a key for one command"]
   Store["auth/storage.rs: the saved login"]
@@ -124,6 +129,7 @@ flowchart TB
   Cmds --> Store
   Cmds --> Config
   Cmds --> V1
+  Cmds --> T
   Device --> Store
   Device --> T
   V1 --> T
@@ -151,6 +157,10 @@ flowchart TB
 ### A key for one command
 
 `status` with `TELMONI_API_KEY` set, or else with `api_key_helper` configured, asks `/v1` with that key, at the endpoint `TELMONI_ENDPOINT`, the configuration file or the default names, and neither reads nor writes the saved login. A blank variable is no variable. The helper runs through `sh` with nothing on its standard input and 30 seconds to answer; what it prints is the key, never shown, and its stderr is the person's. `login`, `logout` and `org`, which manage the saved login, say once that the variable outranks it.
+
+### A job under a monitor
+
+`telmoni run --monitor <slug> -- <command>` pings the monitor's `/start` on the ping lane, under the key `--ping-key` or `TELMONI_PING_KEY` gives and at the endpoint a key asks at; runs the command with its own standard streams; then pings the slug for an exit code of `0`, or `/fail` with the code, and exits with it — `128` and the signal where one ended the command, `127` or `126` where it could not start, each reported as a failed run. Both pings name the run by an id drawn from the system's randomness, so one tried again is heard as the ping it repeats and two runs at once are told apart. A ping gets two tries, five seconds each and a second apart, and a refusal is final. Nothing Telmoni answers, or fails to, changes the command's course or its code: each failure is a `note: telmoni run:` line on stderr.
 
 ### A command that acts in an organization
 
@@ -180,8 +190,8 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 - **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin or the console beside it.
 - **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy.
 - **Every request has a deadline**, 30 seconds in all and 10 to connect, so a stalled host fails in seconds rather than hanging.
-- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, a key refused by its shape is named by where it came from, never by its value, and saved credentials that do not parse are logged under `-v` by line and column, never by their contents.
-- **A key never rides a command line.** `login --with-key` reads standard input and refuses a terminal, so no key reaches `ps`, shell history or a CI log, and `TELMONI_API_KEY` is read once, at the edge, and never saved.
+- **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, a key refused by its shape is named by where it came from, never by its value, saved credentials that do not parse are logged under `-v` by line and column, never by their contents, and a ping key is cut out of every address a log line or an error shows, by its place on the lane and by its shape (`transport::loggable_url`), as the platform cuts it from its own log.
+- **An API key never rides a command line.** `login --with-key` reads standard input and refuses a terminal, so no key reaches `ps`, shell history or a CI log, and `TELMONI_API_KEY` is read once, at the edge, and never saved. A ping key may (`run --ping-key`): made for crontab lines, it can fake a ping and nothing more.
 - **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory.
 - **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow.
 
@@ -196,6 +206,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | Fails | What a person sees | What recovers it |
 |---|---|---|
 | **The platform, or the network** | The platform's message or, when nothing answered, the URL and the cause; the session kept | The platform |
+| **The platform, or the network, under `run`** | A `note: telmoni run:` line on stderr; the command runs and exits as it would have. A start ping lost is a run of no duration; an end ping lost is a run the platform ends as never ended at the monitor's next run or its timeouts | The platform |
 | **A refresh whose answer is lost** | Nothing: it is asked again once, within the platform's grace | — |
 | **A slow or stalled host** | A timeout in seconds, never a hang | The host |
 | **The session, ended in the console** | "session ended; run `telmoni login`", and the saved login deleted | `telmoni login` |
@@ -212,7 +223,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 ## What comes next
 
 - **A command that touches customer data** comes after its lane in the platform: `/cli` for a signed-in person, `/v1` for an API key (`AGENTS.md`).
-- **The CLI sending**: a command wrapped as a run, and a hook for a coding agent's session, once the platform's ingest reads a run out of what they would send ([the platform's design](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md#where-it-goes-next)).
+- **A hook for a coding agent's session**, sent as a run, once the platform's ingest reads one out of what it would send ([the platform's design](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md#where-it-goes-next)).
 
 ## Decisions
 
@@ -236,6 +247,11 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` |
 | **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The workflow lint is a CI job beside it, outside the gate |
 | **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | Two platforms; checking provenance needs `gh` |
+| **`run` fails open** | A monitor exists to catch a job that did not run; a wrapper that stopped the job when Telmoni was down would cause what it watches for, and a monitor with a schedule turns the missing pings into *late* on its own | A wrong line is found in stderr, or by the monitor going late, never by the job failing |
+| **Two tries a ping, five seconds each** | A lost end ping is a run the platform counts as never ended, a false alarm at the next run; the lane answers in milliseconds, and a job must not wait long on a Telmoni that does not | A ping behind a slow network is given up after eleven seconds |
+| **A run id from `/dev/urandom`, no crate** | A ping tried again must be heard as the ping it repeats, and runs that overlap told apart; the CLI carries no `uuid` crate, and the standard library's randomness is not stable yet | A host without `/dev/urandom` sends pings that name no run |
+| **The ping key on the command line too** | A ping key lives on crontab lines by design and can fake a ping and nothing more, where an API key reads a project | A process list shows it; `TELMONI_PING_KEY` keeps it out |
+| **No signal relayed to the command** | Relaying needs `kill(2)`, a dependency the CLI does not carry; at a terminal, Ctrl-C reaches the command on its own | A SIGTERM to the wrapper alone leaves the command running and its run open until the platform ends it |
 
 ## Known gaps
 
@@ -245,5 +261,6 @@ The ones that shape the design, each kept here until it is closed:
 - **`install.sh` checks the checksum, not the provenance**, since checking it needs `gh`.
 - **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless.
 - **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor.
-- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, and a signed-in run of the binary.
+- **`run` relays no signal:** one sent to the wrapper alone ends it and leaves the command running, its run open on the platform until the monitor's next run or its timeouts end it.
+- **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, a signed-in run of the binary, and `run`'s pings against a live lane.
 - **`output_format` is accepted and stored**, and no command reads it.

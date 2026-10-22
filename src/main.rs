@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
 
 use telmoni_cli::auth::{CredentialsStore, run_helper, supplied_key};
-use telmoni_cli::commands::{config_cmd, login, logout, org, status};
+use telmoni_cli::commands::{config_cmd, login, logout, org, run, status};
 use telmoni_cli::config::{Config, load_config, resolve_endpoint};
 use telmoni_cli::transport::ReqwestTransport;
 
@@ -47,6 +47,9 @@ enum Cmd {
 
     /// Manage local CLI configuration.
     Config(config_cmd::ConfigArgs),
+
+    /// Run a command under a monitor, pinging its start and its end.
+    Run(run::RunArgs),
 }
 
 #[tokio::main]
@@ -106,6 +109,7 @@ async fn main() {
     let telmoni_org_env = env_var("TELMONI_ORG");
     let endpoint_env = env_var("TELMONI_ENDPOINT");
     let api_key_env = env_var("TELMONI_API_KEY");
+    let ping_key_env = env_var("TELMONI_PING_KEY");
 
     // These manage the saved login, which a command acting with a key does
     // not read while the variable is set; said once, so a person who signs
@@ -154,11 +158,31 @@ async fn main() {
         }
         Cmd::Org(cmd) => org::execute(cmd, &transport, &store).await,
         Cmd::Config(args) => config_cmd::execute(args, &config_path),
+        Cmd::Run(args) => {
+            let endpoint = resolve_endpoint(None, endpoint_env.as_deref(), &config);
+            run::execute(
+                args,
+                &transport,
+                &endpoint,
+                ping_key_env,
+                tokio::time::sleep,
+            )
+            .await
+            .map(exit_with)
+        }
     };
 
     if let Err(e) = res {
         eprintln!("{e}");
         std::process::exit(1);
+    }
+}
+
+/// Ends the process with the wrapped command's exit code where it is not
+/// success, which `main` answers as it answers every other command's `Ok`.
+fn exit_with(code: i32) {
+    if code != 0 {
+        std::process::exit(code);
     }
 }
 

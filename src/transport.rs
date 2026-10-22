@@ -49,7 +49,7 @@ impl std::fmt::Debug for LaneRequest {
         } = self;
         f.debug_struct("LaneRequest")
             .field("method", method)
-            .field("url", url)
+            .field("url", &loggable_url(url))
             .field("bearer", &bearer.as_ref().map(|_| REDACTED))
             .field("organization", organization)
             .field("json", &json.as_ref().map(|_| REDACTED))
@@ -188,6 +188,87 @@ fn parse_fallback_body(body: &str, status: u16) -> LaneError {
     }
 }
 
+/// `url` as a log line or an error may show it: a ping key rides in the
+/// lane's path, `/ping/v1/{ping_key}/{slug}`, so it is cut out two ways, as
+/// the platform cuts it out of its own log — by place, the segment after
+/// the lane's name and version, whatever stands there, and by shape, any
+/// segment carrying a ping key's or an API key's prefix, since the likeliest
+/// leak is an address nothing matched.
+pub fn loggable_url(url: &str) -> String {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return url
+            .split('/')
+            .map(|segment| {
+                if shaped_as_a_key(segment) {
+                    "…"
+                } else {
+                    segment
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+    };
+    // Rebuilt from its parts: what stood before the path, less any
+    // credentials written into the address itself.
+    let mut shown = format!("{}://", parsed.scheme());
+    shown.push_str(parsed.host_str().unwrap_or_default());
+    if let Some(port) = parsed.port() {
+        shown.push(':');
+        shown.push_str(&port.to_string());
+    }
+    shown.push_str(&loggable_path(parsed.path()));
+    if let Some(query) = parsed.query() {
+        shown.push('?');
+        shown.push_str(query);
+    }
+    shown
+}
+
+/// `path` with the key's place and every key-shaped segment cut out.
+fn loggable_path(path: &str) -> String {
+    let keys_place = keys_place(path);
+    path.split('/')
+        .enumerate()
+        .map(|(at, segment)| {
+            if Some(at) == keys_place || shaped_as_a_key(segment) {
+                "…"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Where the key sits in a path to the ping lane, counted in segments: the
+/// first non-empty one after the lane's name and version, or after the name
+/// alone where no version follows it; `None` on any other path.
+fn keys_place(path: &str) -> Option<usize> {
+    let mut named = path
+        .split('/')
+        .enumerate()
+        .filter(|(_, segment)| !segment.is_empty());
+    let (_, lane) = named.next()?;
+    if !lane.eq_ignore_ascii_case("ping") {
+        return None;
+    }
+    let (at, segment) = named.next()?;
+    let versioned = segment
+        .strip_prefix(['v', 'V'])
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    if versioned {
+        named.next().map(|(at, _)| at)
+    } else {
+        Some(at)
+    }
+}
+
+/// Whether a segment carries a key's prefix anywhere in it: what a shell
+/// wraps a key in rides with it.
+fn shaped_as_a_key(segment: &str) -> bool {
+    segment.contains("telmoniping_") || segment.contains("telmoni_")
+}
+
 /// Whether `host`, as `Url::host_str` spells it, is this machine: `localhost`,
 /// a name under it, or a loopback address. An IPv6 address comes in brackets.
 pub(crate) fn is_loopback_host(host: &str) -> bool {
@@ -266,6 +347,7 @@ fn client_builder() -> reqwest::ClientBuilder {
 /// the bottom of the chain is what tells a refused connection, a name that
 /// does not resolve and a certificate that does not verify apart.
 fn request_failed(url: &str, err: &reqwest::Error) -> anyhow::Error {
+    let url = loggable_url(url);
     if err.is_timeout() {
         return anyhow::anyhow!("timed out waiting for {url}");
     }
@@ -281,7 +363,7 @@ impl Transport for ReqwestTransport {
         refuse_cleartext(&req.url)?;
         debug!(
             method = %req.method,
-            url = %req.url,
+            url = %loggable_url(&req.url),
             organization = req.organization.as_deref(),
             "request"
         );

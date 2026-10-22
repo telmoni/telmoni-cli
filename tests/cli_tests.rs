@@ -360,3 +360,77 @@ fn a_key_for_one_command() {
     );
     assert!(!saved(&creds));
 }
+
+// `telmoni run` wraps a command: its output and its exit code are the
+// command's own. Without a ping key, or with a Telmoni that does not answer,
+// the command still runs and a note on stderr says so; the key never reaches
+// stderr, `-v`'s log included. A line with no command, or no monitor, is a
+// usage error.
+#[test]
+fn run_fails_open_and_keeps_the_commands_exit_code() {
+    let sandbox = Sandbox::new();
+
+    let out = sandbox.run(
+        &[
+            "run",
+            "--monitor",
+            "nightly",
+            "--",
+            "sh",
+            "-c",
+            "echo out; echo err >&2; exit 3",
+        ],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(stdout(&out), "out\n");
+    assert!(stderr(&out).contains("err\n"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("no ping key: pass --ping-key or set TELMONI_PING_KEY"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = sandbox.run(
+        &[
+            "-v",
+            "run",
+            "--monitor",
+            "nightly",
+            "--",
+            "sh",
+            "-c",
+            "exit 3",
+        ],
+        &[
+            ("TELMONI_ENDPOINT", "http://127.0.0.1:9"),
+            (
+                "TELMONI_PING_KEY",
+                "telmoniping_secretsecretsecretsecretsecr",
+            ),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        stderr(&out).contains("the start ping got no answer"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("the end ping got no answer"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("/ping/v1/…/nightly"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("secretsecret"), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+
+    let out = sandbox.run(&["run", "--monitor", "nightly"], &[]);
+    assert_eq!(out.status.code(), Some(2));
+    let out = sandbox.run(&["run", "--", "true"], &[]);
+    assert_eq!(out.status.code(), Some(2));
+}
