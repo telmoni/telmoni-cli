@@ -4,7 +4,7 @@
 # Installs the `telmoni` CLI for this host.
 #
 # Environment:
-#   TELMONI_VERSION=0.1.0       that tag's assets rather than the latest release
+#   TELMONI_VERSION=0.1.1       that tag's assets rather than the latest release
 #   TELMONI_INSTALL_DIR         override installation directory (default: /usr/local/bin or ~/.local/bin)
 #   TELMONI_INSTALL_DRY_RUN=1   print each command that would change this machine, run none
 
@@ -104,7 +104,7 @@ else
     status "Looking up latest release..."
     LATEST_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
     if [ -z "$LATEST_JSON" ]; then
-        error "Could not fetch latest release info from GitHub API. You can specify a version explicitly: TELMONI_VERSION=0.1.0 sh install.sh"
+        error "Could not fetch latest release info from GitHub API. You can specify a version explicitly: TELMONI_VERSION=0.1.1 sh install.sh"
     fi
     TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | head -1 | cut -d '"' -f 4)
     if [ -z "$TAG" ]; then
