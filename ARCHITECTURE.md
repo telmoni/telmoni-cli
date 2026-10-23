@@ -200,7 +200,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 ## Distribution
 
 - **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on x86_64 Linux and Apple-silicon macOS.
-- **A release** is the workspace's version bumped in one commit on `main`. Once CI passes on it, `.github/workflows/release.yml` builds the x86_64 Linux archive and verifies the crate, then waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
+- **A release** is the workspace's version bumped in one commit on `main`. Its push starts `.github/workflows/release.yml`, which waits for CI to pass on that commit, since crates.io's trusted publishing refuses a run that CI's `workflow_run` starts, then builds the x86_64 Linux archive and verifies the crate, and waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
 - **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one.
 
 ## When something fails
