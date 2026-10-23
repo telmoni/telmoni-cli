@@ -63,7 +63,7 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 **What it must live with:**
 - **Nothing has shipped.** Commands, flags and both files change in place, with no migration of an older file and no deprecated alias (`AGENTS.md`).
 - **The platform's code is the contract.** A disagreement is recorded, and reported there, never worked around here.
-- **Two platforms are built:** Apple-silicon macOS and x86_64 Linux. On Intel macOS and ARM Linux, `install.sh` points to building from source, and it refuses any other platform.
+- **One platform is released, until the macOS build is signed:** x86_64 Linux. On a Mac, Apple silicon or Intel, and on ARM Linux, `install.sh` points to building from source, and it refuses any other platform. The macOS archive waits until it can be hardened and signed, since an unsigned one would ask for the Keychain at every upgrade; CI's gate still builds and tests on Apple silicon at every push.
 
 ## Context
 
@@ -199,8 +199,8 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 
 ## Distribution
 
-- **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on both shipped platforms.
-- **A release** is an annotated `v*` tag matching the workspace's version: each platform built natively, the archives and `install.sh` attested, and a GitHub release made from the tag.
+- **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on x86_64 Linux and Apple-silicon macOS.
+- **A release** is the workspace's version bumped in one commit on `main`. Once CI passes on it, `.github/workflows/release.yml` builds the x86_64 Linux archive and verifies the crate, then waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
 - **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one.
 
 ## When something fails
@@ -249,7 +249,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **rustls with bundled roots** | The same trust on every machine | A root added to the system's store is not trusted |
 | **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` |
 | **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The workflow lint is a CI job beside it, outside the gate |
-| **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | Two platforms; checking provenance needs `gh` |
+| **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | One platform until the macOS build is signed; checking provenance needs `gh` |
 | **`run` fails open** | A monitor exists to catch a job that did not run; a wrapper that stopped the job when Telmoni was down would cause what it watches for, and a monitor with a schedule turns the missing pings into *late* on its own | A wrong line is found in stderr, or by the monitor going late, never by the job failing |
 | **Two tries a ping, five seconds each** | A lost end ping is a run the platform counts as never ended, a false alarm at the next run; the lane answers in milliseconds, and a job must not wait long on a Telmoni that does not | A ping behind a slow network is given up after eleven seconds |
 | **A run id from `/dev/urandom`, no crate** | A ping tried again must be heard as the ping it repeats, and runs that overlap told apart; the CLI carries no `uuid` crate, and the standard library's randomness is not stable yet | A host without `/dev/urandom` sends pings that name no run |

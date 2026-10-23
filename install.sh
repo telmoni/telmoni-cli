@@ -68,10 +68,10 @@ TARGET="${OS}-${ARCH}"
 
 # Target compatibility matrix
 case "$TARGET" in
-    macos-aarch64) ;;
     linux-x86_64)  ;;
     # The crate's own name: `telmoni` on crates.io is the Rust SDK, which
     # installs no command.
+    macos-aarch64) error "macOS builds are not published yet. Build from source: cargo install --locked telmoni-cli" ;;
     macos-x86_64)  error "Intel macOS (x86_64) is not a prebuilt target. Build from source: cargo install --locked telmoni-cli" ;;
     linux-aarch64) error "Linux ARM64 is not a prebuilt target yet. Build from source: cargo install --locked telmoni-cli" ;;
     *)             error "Unsupported target platform: $TARGET" ;;
