@@ -1,6 +1,6 @@
 # Telmoni CLI — Agent Guidelines
 
-The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/telmoni/telmoni-cli)): a Rust workspace (`src/`). It is a client of the platform ([`telmoni/telmoni`](https://github.com/telmoni/telmoni)) and of nothing else: nothing here runs on a server, holds a database or verifies a token. Its requests go to one base URL, `https://telmoni.com` unless `TELMONI_ENDPOINT` says otherwise (`http://localhost:3000` locally), moving to the machine host, `https://api.telmoni.com`, once the platform serves its lanes there; no other hostname appears in `src/`. The SDKs, which send an agent's spans to the platform's ingest, are the platform's, under `sdk/` in `telmoni/telmoni`.
+The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/telmoni/telmoni-cli)): a Rust workspace (`src/`). It is a client of the platform ([`telmoni/telmoni`](https://github.com/telmoni/telmoni)) and of nothing else: nothing here runs on a server, holds a database or verifies a token. Its requests go to one base URL, the machine host, `https://api.telmoni.com`, unless `TELMONI_ENDPOINT` says otherwise (`http://localhost:8082` locally, the platform's server); no other hostname appears in `src/`. The SDKs, which send an agent's spans to the platform's ingest, are the platform's, under `sdk/` in `telmoni/telmoni`.
 
 ## Ground Rules
 - **Pre-launch:** nothing has shipped. Change commands, flags, the credentials file and the config file directly to their ideal shape; no migration of an old file, no deprecated aliases, no shims.
@@ -20,7 +20,7 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 
 ## Commands
 - **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, checks that the toolchain channel matches `rust-version`, then clippy, build, test, doc and `cargo deny check`, all `--locked`.
-- **Locally:** `cargo run -- <command>`; with the platform's `make up` running, `TELMONI_ENDPOINT=http://localhost:3000` points it there.
+- **Locally:** `cargo run -- <command>`; with the platform's `make up` running, `TELMONI_ENDPOINT=http://localhost:8082` points it at the server, which serves the `/cli` lanes.
 
 ## Code Rules
 - **Tests are hermetic:** HTTP, and the poll loop's sleeps and clock, are injected (`Transport`, closures); the credentials path is a value, so tests write under `std::env::temp_dir()`.
