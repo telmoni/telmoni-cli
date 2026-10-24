@@ -2109,6 +2109,36 @@ fn test_this_machine_bypasses_any_proxy() {
     }
 }
 
+// An address a log line or an error shows carries no secret: credentials
+// written into it are left out, and a segment carrying an API key's prefix is
+// cut, as the platform cuts one from its own log; the rest stands.
+#[test]
+fn test_no_secret_in_an_address_a_log_line_shows() {
+    use telmoni_cli::transport::loggable_url;
+
+    for (url, shown) in [
+        (
+            "https://api.telmoni.com/v1/organization?limit=5",
+            "https://api.telmoni.com/v1/organization?limit=5",
+        ),
+        (
+            "https://user:hunter2@proxy.example.com:8443/cli/v1/me",
+            "https://proxy.example.com:8443/cli/v1/me",
+        ),
+        (
+            "https://api.telmoni.com/v1/telmoni_4p1k3y/members",
+            "https://api.telmoni.com/v1/…/members",
+        ),
+        (
+            "https://api.telmoni.com/v1/'telmoni_4p1k3y'",
+            "https://api.telmoni.com/v1/…",
+        ),
+        ("not a url/telmoni_4p1k3y/x", "not a url/…/x"),
+    ] {
+        assert_eq!(loggable_url(url), shown, "{url}");
+    }
+}
+
 // 21. A label is not a name: `org switch` takes an id or a slug, and a label
 //     is unknown even when one organization alone carries it. Two called
 //     Acme, one at /acme: "Acme" is refused before any request, "acme" is

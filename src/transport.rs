@@ -188,28 +188,13 @@ fn parse_fallback_body(body: &str, status: u16) -> LaneError {
     }
 }
 
-/// `url` as a log line or an error may show it: a ping key rides in the
-/// lane's path, `/ping/v1/{ping_key}/{slug}`, so it is cut out two ways, as
-/// the platform cuts it out of its own log — by place, the segment after
-/// the lane's name and version, whatever stands there, and by shape, any
-/// segment carrying a ping key's or an API key's prefix, since the likeliest
-/// leak is an address nothing matched.
+/// `url` as a log line or an error may show it: rebuilt without any
+/// credentials written into the address, and every segment carrying an API
+/// key's prefix cut out, as the platform cuts one from its own log.
 pub fn loggable_url(url: &str) -> String {
     let Ok(parsed) = reqwest::Url::parse(url) else {
-        return url
-            .split('/')
-            .map(|segment| {
-                if shaped_as_a_key(segment) {
-                    "…"
-                } else {
-                    segment
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("/");
+        return loggable_path(url);
     };
-    // Rebuilt from its parts: what stood before the path, less any
-    // credentials written into the address itself.
     let mut shown = format!("{}://", parsed.scheme());
     shown.push_str(parsed.host_str().unwrap_or_default());
     if let Some(port) = parsed.port() {
@@ -224,13 +209,12 @@ pub fn loggable_url(url: &str) -> String {
     shown
 }
 
-/// `path` with the key's place and every key-shaped segment cut out.
+/// `path` with every segment carrying an API key's prefix anywhere in it cut
+/// out: what a shell wraps a key in rides with it.
 fn loggable_path(path: &str) -> String {
-    let keys_place = keys_place(path);
     path.split('/')
-        .enumerate()
-        .map(|(at, segment)| {
-            if Some(at) == keys_place || shaped_as_a_key(segment) {
+        .map(|segment| {
+            if segment.contains("telmoni_") {
                 "…"
             } else {
                 segment
@@ -238,35 +222,6 @@ fn loggable_path(path: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
-}
-
-/// Where the key sits in a path to the ping lane, counted in segments: the
-/// first non-empty one after the lane's name and version, or after the name
-/// alone where no version follows it; `None` on any other path.
-fn keys_place(path: &str) -> Option<usize> {
-    let mut named = path
-        .split('/')
-        .enumerate()
-        .filter(|(_, segment)| !segment.is_empty());
-    let (_, lane) = named.next()?;
-    if !lane.eq_ignore_ascii_case("ping") {
-        return None;
-    }
-    let (at, segment) = named.next()?;
-    let versioned = segment
-        .strip_prefix(['v', 'V'])
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
-    if versioned {
-        named.next().map(|(at, _)| at)
-    } else {
-        Some(at)
-    }
-}
-
-/// Whether a segment carries a key's prefix anywhere in it: what a shell
-/// wraps a key in rides with it.
-fn shaped_as_a_key(segment: &str) -> bool {
-    segment.contains("telmoniping_") || segment.contains("telmoni_")
 }
 
 /// Whether `host`, as `Url::host_str` spells it, is this machine: `localhost`,

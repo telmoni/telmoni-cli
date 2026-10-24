@@ -30,10 +30,9 @@ telmoni login       # device-code sign-in: a code to type into any browser
 telmoni status      # who you are and the active organization (--json for scripts)
 telmoni org list    # the organizations you belong to; `org switch` changes the active one
 telmoni logout
-telmoni run --monitor nightly -- ./job.sh   # the job under a monitor: a ping at its start and its end
 ```
 
-`telmoni run` wraps a job in a monitor's pings under the project's ping key (`TELMONI_PING_KEY`), keeps the job's streams and exit code as its own, and never fails the job because Telmoni did not answer. For CI and servers, set `TELMONI_API_KEY`: each command uses the key and saves nothing, and at a terminal asks once, for each new key, whether to use it ahead of the saved login. `telmoni login --with-key < key.txt` saves one instead, read from standard input so it never sits on the command line. On a Mac the saved login lives in the Keychain. Every command, flag and variable is documented at [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli).
+For CI and servers, set `TELMONI_API_KEY`: each command uses the key and saves nothing, and at a terminal asks once, for each new key, whether to use it ahead of the saved login. `telmoni login --with-key < key.txt` saves one instead, read from standard input so it never sits on the command line. On a Mac the saved login lives in the Keychain. Every command, flag and variable is documented at [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli).
 
 Add `-v` to any command to log to stderr which files it read and wrote, where its endpoint came from, and each request and answer. It never logs a token or a key.
 
