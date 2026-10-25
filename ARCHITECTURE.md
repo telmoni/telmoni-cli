@@ -239,6 +239,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` |
 | **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The workflow lint is a CI job beside it, outside the gate |
 | **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | One platform until the macOS build is signed; checking provenance needs `gh` |
+| **The command `telmoni`, from the crate `telmoni-cli`** | The command carries the product's name, as `stripe` and `gh` do, and `telmoni` on crates.io, as on PyPI and npm, is the SDK, so the crate takes the suffix; the platform's server binary is `telmoni-server`, so one program answers to the bare name | `cargo install telmoni` lands on the SDK: cargo says it has no binaries, and the SDK crate's description names `telmoni-cli` |
 
 ## Known gaps
 
