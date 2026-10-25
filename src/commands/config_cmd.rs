@@ -68,8 +68,7 @@ pub fn execute(args: ConfigArgs, path: &Path, env_key: Option<&str>) -> Result<(
                 "  api_key_helper:  {}",
                 config.api_key_helper.as_deref().unwrap_or("(not set)")
             );
-            // Only while the variable holds a key, as Claude Code shows its
-            // toggle.
+            // Only while the variable holds a key.
             if let Some(digest) = env_key.and_then(env_key_digest) {
                 println!(
                     "  use_api_key_env: {}",

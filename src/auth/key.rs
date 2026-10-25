@@ -105,9 +105,8 @@ pub enum EnvKeyUse {
 
 /// Whether to act with `value`, the variable's key, ahead of the saved
 /// login: at a terminal without `--json`, as `answers` holds the person's
-/// answer for it, and asked when it holds none; anywhere else unasked, as
-/// Claude Code uses `ANTHROPIC_API_KEY` under `-p`. A value that is no API
-/// key is used too, for `supplied_key` to refuse by name.
+/// answer for it, and asked when it holds none; anywhere else unasked. A
+/// value that is no API key is used too, for `supplied_key` to refuse by name.
 #[must_use]
 pub fn env_key_use(
     value: &str,
