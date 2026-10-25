@@ -149,7 +149,9 @@ async fn main() {
             match supplied_key(env_key, config.api_key_helper.as_deref(), run_helper).await {
                 Ok(Some(key)) => {
                     let endpoint = resolve_endpoint(None, endpoint_env.as_deref(), &config);
-                    status::execute_with_key(args, &transport, &key, &endpoint).await
+                    // Named as not in use, so read and nothing more.
+                    let unused = status::UnusedLogin::of(store.peek().as_ref());
+                    status::execute_with_key(args, &transport, &key, &endpoint, unused).await
                 }
                 Ok(None) => {
                     status::execute(

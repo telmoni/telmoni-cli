@@ -3206,15 +3206,25 @@ async fn test_the_helper_runs_through_the_shell() {
 }
 
 // 35. status with a supplied key asks /v1 with that key, at the endpoint it
-//     is given, and leaves the saved login alone: none is read or written
+//     is given, and names the saved login it passed over — a device sign-in
+//     by its address, or a saved API key — read for that alone: never
+//     refreshed, never written, and none where nothing is saved
 #[tokio::test]
-async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
+async fn test_status_with_a_supplied_key_marks_the_saved_login_it_passed_over() {
     use telmoni_cli::auth::{KeySource, SuppliedKey};
-    use telmoni_cli::commands::status;
+    use telmoni_cli::commands::status::{self, UnusedLogin};
 
     let store = temp_store();
+    assert_eq!(store.peek(), None);
+    assert_eq!(UnusedLogin::of(None), None);
     let saved = device_creds(&["org_1"], "org_1");
     store.save(&saved).unwrap();
+    let unused = UnusedLogin::of(store.peek().as_ref()).unwrap();
+    assert_eq!(unused.kind(), "device");
+    assert_eq!(
+        unused.line(),
+        "Saved login, not in use: a device sign-in for alice@example.com"
+    );
     let transport = MockTransport::new();
     transport.push_answer(
         200,
@@ -3230,15 +3240,28 @@ async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
         &transport,
         &key,
         "https://env.example",
+        Some(unused),
     )
     .await
     .unwrap();
 
+    // One request, the key's: the login named was not refreshed.
     let reqs = transport.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].url, "https://env.example/v1/organization");
     assert_eq!(reqs[0].bearer.as_deref(), Some("tm_supplied"));
     assert_eq!(store.load().unwrap(), Some(saved));
+
+    let with_key = Credentials::for_api_key("https://telmoni.com".to_string(), "tm_saved".into());
+    store.save(&with_key).unwrap();
+    let unused = UnusedLogin::of(store.peek().as_ref()).unwrap();
+    assert_eq!(unused.kind(), "api_key");
+    assert_eq!(unused.line(), "Saved login, not in use: a saved API key");
+
+    // A copy that cannot be read is none; its silence is cli_tests's.
+    std::fs::write(&store.path, "{ not json").unwrap();
+    assert_eq!(store.peek(), None);
+    let _ = std::fs::remove_file(&store.path);
 }
 
 // 36. TELMONI_API_KEY at a terminal: a new key is asked about, and the answer

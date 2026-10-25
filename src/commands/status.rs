@@ -45,7 +45,7 @@ pub async fn execute(
                 .api_key
                 .as_deref()
                 .context("missing api key in credentials")?;
-            report_api_key(args, transport, &creds.endpoint, api_key, None).await
+            report_api_key(args, transport, &creds.endpoint, api_key, None, None).await
         }
         AuthType::Device => {
             execute_device(args, transport, store, &mut creds, telmoni_org_env).await
@@ -53,32 +53,76 @@ pub async fn execute(
     }
 }
 
+/// The saved login a key supplied for this command passed over, as `status`
+/// marks it after its report; read for this and nothing more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnusedLogin {
+    /// A device sign-in, named by its address.
+    Device { email: String },
+    /// A saved API key.
+    ApiKey,
+}
+
+impl UnusedLogin {
+    /// What `saved` is, if anything was saved.
+    pub fn of(saved: Option<&Credentials>) -> Option<Self> {
+        let creds = saved?;
+        match creds.auth_type {
+            AuthType::Device => creds.person.as_ref().map(|person| Self::Device {
+                email: person.email.clone(),
+            }),
+            AuthType::ApiKey => Some(Self::ApiKey),
+        }
+    }
+
+    /// The `--json` field's value.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Device { .. } => "device",
+            Self::ApiKey => "api_key",
+        }
+    }
+
+    /// The line after the report.
+    pub fn line(&self) -> String {
+        match self {
+            Self::Device { email } => {
+                format!("Saved login, not in use: a device sign-in for {email}")
+            }
+            Self::ApiKey => "Saved login, not in use: a saved API key".to_owned(),
+        }
+    }
+}
+
 /// Executes `status` for a key supplied for this command alone, at
 /// `endpoint` (the flag-less one: `TELMONI_ENDPOINT`, the configuration
-/// file, the default). The saved login is neither read nor written: the
-/// key stands in for it.
+/// file, the default). The key stands in for the saved login, which is
+/// never written here; `unused` is that login, named as not in use.
 pub async fn execute_with_key(
     args: StatusArgs,
     transport: &impl Transport,
     key: &SuppliedKey,
     endpoint: &str,
+    unused: Option<UnusedLogin>,
 ) -> Result<()> {
-    report_api_key(args, transport, endpoint, &key.key, Some(key)).await
+    report_api_key(args, transport, endpoint, &key.key, Some(key), unused).await
 }
 
 /// What an API key opens, asked of `/v1`; `supplied` is the key's origin
-/// when it is not the saved login's.
+/// when it is not the saved login's, and `unused` the saved login it
+/// passed over.
 async fn report_api_key(
     args: StatusArgs,
     transport: &impl Transport,
     endpoint: &str,
     api_key: &str,
     supplied: Option<&SuppliedKey>,
+    unused: Option<UnusedLogin>,
 ) -> Result<()> {
     let org = fetch_v1_organization(transport, endpoint, api_key).await?;
 
     if args.json {
-        let out = json!({
+        let mut out = json!({
             "authType": "api_key",
             "keySource": supplied.map_or("saved", |k| k.source.as_str()),
             "endpoint": endpoint,
@@ -88,6 +132,9 @@ async fn report_api_key(
                 "label": org.label(),
             }
         });
+        if let (Some(unused), Some(fields)) = (&unused, out.as_object_mut()) {
+            fields.insert("unusedLogin".to_owned(), json!(unused.kind()));
+        }
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         match supplied {
@@ -100,6 +147,9 @@ async fn report_api_key(
             None => println!("API key for {} ({})", org.organization_id, org.label()),
         }
         println!("Endpoint: {endpoint}");
+        if let Some(unused) = &unused {
+            println!("{}", unused.line());
+        }
     }
     Ok(())
 }

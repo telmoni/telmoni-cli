@@ -331,6 +331,22 @@ fn a_key_for_one_command() {
     assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
     assert!(!stderr(&out).contains("tm_from_env"), "{}", stderr(&out));
 
+    // The saved login the key passes over is read in silence: a copy that
+    // cannot be read earns its note only once it is the login in use.
+    std::fs::create_dir_all(sandbox.telmoni_dir()).unwrap();
+    std::fs::write(&creds, "{ not json").unwrap();
+    let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_API_KEY", "tm_from_env")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!stderr(&out).contains("note:"), "{}", stderr(&out));
+    let out = sandbox.run(&["status"], &[endpoint]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("note: the saved credentials cannot be read"),
+        "{}",
+        stderr(&out)
+    );
+    std::fs::remove_file(&creds).unwrap();
+
     let out = sandbox.run(&["config", "set", "api_key_helper", "exit 4"], &[]);
     assert!(out.status.success(), "{}", stderr(&out));
     let out = sandbox.run(&["status"], &[endpoint]);

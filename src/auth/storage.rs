@@ -310,10 +310,24 @@ impl CredentialsStore {
     /// copy in the Keychain and one in the file, which a save the Keychain
     /// refused left, the newer is read.
     pub fn load(&self) -> Result<Option<Credentials>> {
+        Ok(self.read(true))
+    }
+
+    /// The saved login as it stands, for a command that passes it over: no
+    /// note on stderr, since nobody is signing in with it. A copy that cannot
+    /// be read is none.
+    pub fn peek(&self) -> Option<Credentials> {
+        self.read(false)
+    }
+
+    /// The saved login from the Keychain or the file, the newer where both
+    /// hold one; `notes` says whether a copy that cannot be read, or a
+    /// Keychain that did not answer, is said so.
+    fn read(&self, notes: bool) -> Option<Credentials> {
         let mut unanswered = None;
         let in_keychain = if self.keychain {
             match keychain::read(&self.path, self.may_ask) {
-                Ok(Some(content)) => parse(&content, "the Keychain"),
+                Ok(Some(content)) => parse(&content, "the Keychain", notes),
                 Ok(None) => {
                     debug!("no credentials in the Keychain");
                     None
@@ -327,8 +341,9 @@ impl CredentialsStore {
         } else {
             None
         };
-        let in_file = self.load_file();
-        if in_keychain.is_none()
+        let in_file = self.load_file(notes);
+        if notes
+            && in_keychain.is_none()
             && in_file.is_none()
             && let Some(err) = unanswered
         {
@@ -336,24 +351,26 @@ impl CredentialsStore {
                 "note: the Keychain did not answer ({err}), so a login saved there is not read"
             );
         }
-        Ok(match (in_keychain, in_file) {
+        match (in_keychain, in_file) {
             (Some(keychain), Some(file)) if file.updated_at > keychain.updated_at => Some(file),
             (Some(keychain), _) => Some(keychain),
             (None, file) => file,
-        })
+        }
     }
 
-    fn load_file(&self) -> Option<Credentials> {
+    fn load_file(&self, notes: bool) -> Option<Credentials> {
         let path = self.path.display();
         if !self.path.exists() {
             debug!(%path, "no credentials file");
             return None;
         }
         match std::fs::read_to_string(&self.path) {
-            Ok(content) => parse(&content, "the credentials file"),
+            Ok(content) => parse(&content, "the credentials file", notes),
             Err(err) => {
                 debug!(%path, %err, "the credentials file cannot be read");
-                eprintln!("note: the saved credentials cannot be read; sign in again");
+                if notes {
+                    eprintln!("note: the saved credentials cannot be read; sign in again");
+                }
                 None
             }
         }
@@ -481,9 +498,9 @@ impl CredentialsStore {
     }
 }
 
-/// Reads saved credentials out of `content`, from `origin`; `None`, with a
-/// note, for a copy that does not parse or lacks what it signs in with.
-fn parse(content: &str, origin: &str) -> Option<Credentials> {
+/// The credentials `content`, from `origin`, holds; none for a copy that
+/// does not parse or lacks what it signs in with, said on stderr when `notes`.
+fn parse(content: &str, origin: &str, notes: bool) -> Option<Credentials> {
     let creds = match serde_json::from_str::<Credentials>(content) {
         Ok(creds) => creds,
         Err(err) => {
@@ -496,7 +513,9 @@ fn parse(content: &str, origin: &str) -> Option<Credentials> {
                 column = err.column(),
                 "the saved credentials do not parse"
             );
-            eprintln!("note: the saved credentials cannot be read; sign in again");
+            if notes {
+                eprintln!("note: the saved credentials cannot be read; sign in again");
+            }
             return None;
         }
     };
@@ -505,15 +524,19 @@ fn parse(content: &str, origin: &str) -> Option<Credentials> {
     match creds.auth_type {
         AuthType::Device => {
             if creds.access_token.is_none() || creds.person.is_none() {
-                eprintln!(
-                    "note: device credentials missing access token; treating as not signed in"
-                );
+                if notes {
+                    eprintln!(
+                        "note: device credentials missing access token; treating as not signed in"
+                    );
+                }
                 return None;
             }
         }
         AuthType::ApiKey => {
             if creds.api_key.is_none() {
-                eprintln!("note: api_key credentials missing key; treating as not signed in");
+                if notes {
+                    eprintln!("note: api_key credentials missing key; treating as not signed in");
+                }
                 return None;
             }
         }
