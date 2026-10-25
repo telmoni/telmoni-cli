@@ -26,8 +26,6 @@ dist/
 # The maintainer's own notes, never repo docs.
 scratch/
 *.log
-# The plan is kept outside the repository, under scratch/.
-/ROADMAP.md
 
 # ── Editor / OS ───────────────────────────────────────────────────────────────
 .vscode/
