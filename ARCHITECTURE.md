@@ -48,14 +48,14 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 | **A key never rides a command line, and need not be saved** | `login --with-key` reads it from standard input; `TELMONI_API_KEY`, or what `api_key_helper` prints, supplies one for a single command and is never saved |
 | **A crash or a blip never loses the session** | The saved login written atomically, to the Keychain or the file; a 5xx or a dropped connection never deletes it; a refresh whose answer was lost asked again once |
 | **The platform decides when a session ends** | A 401 read by its problem type, one refresh deciding a bearer refused as expired or unknown |
-| **What a checkout holds cannot redirect it** | The environment read only at the edge, a `.env` only in debug builds, and the configuration never from the working directory |
-| **Tests never touch the network or the person's files** | HTTP, sleeps, the browser, standard input and both files' paths injected, and the Keychain left to the binary's own store, under an item named for its home |
+| **What a checkout holds cannot redirect it** | The environment read only at the edge, a `.env` only in debug builds, and the configuration never resolved against the working directory |
+| **Tests never touch the network or the person's files** | HTTP, sleeps, the browser, standard input and both files' paths injected, and the Keychain left to the binary's own store, under an item named for its path |
 | **A download can be checked** | A checksum beside every archive, and build provenance signed for the release workflow |
 
 **What it is not, on purpose:**
 - **A server, a database or a verifier.** The platform owns the session; the CLI holds its opaque tokens.
 - **A loopback sign-in.** No listener, no redirect, no PKCE: a browser may never reach the machine.
-- **Profiles.** One saved login, one session at a time.
+- **Profiles.** No profile names and no switch between them: a login lives in a configuration directory, one session at a time, and `TELMONI_CONFIG_DIR` names another.
 - **A command written ahead of its lane.** A command waits for the platform to serve what it would call: `/v1`'s lanes in `V1_LANES`, `/cli`'s in auth's `cli_router`, both behind the server's door for machines.
 
 **What it must live with:**
@@ -168,7 +168,7 @@ A failed answer is read in the platform's three error shapes, and a 401 by its p
 
 ## Data
 
-The CLI's state is two files in the person's configuration directory, `~/Library/Application Support/telmoni/` on macOS and `~/.config/telmoni/` on Linux, and never in the working directory; on a Mac, a Keychain item holds the login in the credentials file's place.
+The CLI's state is two files in one directory: the person's configuration directory, `~/Library/Application Support/telmoni/` on macOS and `~/.config/telmoni/` on Linux, or the one `TELMONI_CONFIG_DIR` names, an absolute path, so a shell with a value of its own keeps a login of its own; never one resolved against the working directory, so a relative path is refused. On a Mac, a Keychain item holds the login in the credentials file's place, its account the file's path as given, so each directory's login is an item of its own.
 
 | File | Holds | Written |
 |---|---|---|
@@ -184,7 +184,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 - **Every request has a deadline**, 30 seconds in all and 10 to connect, so a stalled host fails in seconds rather than hanging.
 - **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, the question about `TELMONI_API_KEY` names the variable and never its key, a key refused by its shape is named by where it came from, never by its value, saved credentials that do not parse are logged under `-v` by line and column, never by their contents, and an address a log line or an error shows is rebuilt without any credentials written into it and with every segment carrying an API key's prefix cut out (`transport::loggable_url`), as the platform cuts one from its own log.
 - **A key never rides a command line.** `login --with-key` reads standard input and refuses a terminal, so no key reaches `ps`, shell history or a CI log, and `TELMONI_API_KEY` is read once, at the edge, and never saved.
-- **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read from the working directory.
+- **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read relative to the working directory: `TELMONI_CONFIG_DIR` takes an absolute path alone.
 - **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow.
 
 ## Distribution
@@ -207,7 +207,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **A Keychain that would ask, over SSH or with stderr no terminal** | The login kept in the file instead, with a note; one saved in the Keychain unread, with a note | Unlocking it, the command at the Mac's own terminal, which may ask, or signing in again |
 | **A failing `api_key_helper`** | Its stderr, then `api_key_helper failed`, printed nothing, or did not answer; no request | The helper, or `config set api_key_helper` |
 | **A file that does not parse** | Signed out, or the default configuration, with a note; the `config` commands fail on it, and at a terminal the question about `TELMONI_API_KEY` comes back every time, its answer unkept | `telmoni login` for the credentials; mending or deleting `config.json` |
-| **No configuration directory** | The command says so and exits 1 | The environment |
+| **No configuration directory, or a relative `TELMONI_CONFIG_DIR`** | The command says so and exits 1 | `HOME`, or an absolute `TELMONI_CONFIG_DIR` |
 | **A browser that cannot open** | A note; the code and the URL are printed already | Any browser |
 | **An organization's URL changed** | The new slug refused until the cache is rewritten; the old one held to the platform's answer by `status` and `org switch` | `telmoni status` |
 

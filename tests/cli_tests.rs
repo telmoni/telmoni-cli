@@ -428,3 +428,73 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
         stderr(&out)
     );
 }
+
+// TELMONI_CONFIG_DIR, an absolute path, holds both files in place of the
+// configuration directory, a login per directory, read and signed out by the
+// commands run with that value; a relative path is refused, a blank one none.
+#[test]
+fn a_login_per_configuration_directory() {
+    let sandbox = Sandbox::new();
+    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+    let default = sandbox.telmoni_dir().join("credentials.json");
+    let a = sandbox.root.join("a");
+    let b = sandbox.root.join("b");
+    let in_a = ("TELMONI_CONFIG_DIR", a.to_str().unwrap());
+    let in_b = ("TELMONI_CONFIG_DIR", b.to_str().unwrap());
+
+    // A relative path would be taken against the working directory.
+    let out = sandbox.run_with_input(
+        &["login", "--with-key"],
+        &[endpoint, ("TELMONI_CONFIG_DIR", "cfg")],
+        "tm_secret_key\n",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("TELMONI_CONFIG_DIR must be an absolute path"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!saved(&default));
+    assert_eq!(std::fs::read_dir(sandbox.work()).unwrap().count(), 0);
+
+    // The directory's own configuration file names the endpoint.
+    let out = sandbox.run(
+        &["config", "set", "endpoint", "http://127.0.0.1:9"],
+        &[in_a],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(a.join("config.json").exists());
+    assert!(!sandbox.telmoni_dir().join("config.json").exists());
+
+    let out = sandbox.run_with_input(&["login", "--with-key"], &[in_a], "tm_key_a\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "Signed in with API key\nEndpoint: http://127.0.0.1:9\n"
+    );
+    let out = sandbox.run_with_input(&["login", "--with-key"], &[endpoint, in_b], "tm_key_b\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(saved(&a.join("credentials.json")));
+    assert!(saved(&b.join("credentials.json")));
+    assert!(!saved(&default));
+
+    // Each run reads its own directory's login; a blank value is the default's.
+    for env in [&[in_a][..], &[endpoint, in_b][..]] {
+        let out = sandbox.run(&["status"], env);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+    }
+    let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_CONFIG_DIR", "  ")]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+
+    // The value is trimmed.
+    let padded = format!(" {} ", a.display());
+    let out = sandbox.run(&["logout"], &[("TELMONI_CONFIG_DIR", padded.as_str())]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!saved(&a.join("credentials.json")));
+    assert!(saved(&b.join("credentials.json")));
+    let out = sandbox.run(&["logout"], &[endpoint, in_b]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!saved(&b.join("credentials.json")));
+}

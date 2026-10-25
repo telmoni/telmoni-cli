@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::io::IsTerminal;
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -68,16 +69,28 @@ async fn main() {
         .with_writer(std::io::stderr)
         .try_init();
 
-    // ⚠ Never a path under the working directory. The configuration file
-    // names the endpoint `login` signs in against, so a checkout the CLI is
-    // run in could send the sign-in, and the API key after it, to a host of
-    // its choosing; and a login there would leave the refresh token or the
-    // API key in whatever checkout or CI workspace the CLI was run in.
-    let Some(config_dir) = dirs::config_dir() else {
-        eprintln!("no configuration directory to keep the credentials file in; set HOME");
-        std::process::exit(1);
+    // ⚠ Never a path resolved against the working directory, so
+    // TELMONI_CONFIG_DIR takes an absolute path alone: the configuration file
+    // names the endpoint `login` signs in against, so a checkout the CLI runs
+    // in could send the sign-in, and the key after it, to a host of its
+    // choosing, and a login there would leave the token in that checkout.
+    let telmoni_dir = match env_var("TELMONI_CONFIG_DIR").map(|dir| PathBuf::from(dir.trim())) {
+        Some(dir) if dir.is_absolute() => dir,
+        Some(_) => {
+            eprintln!("TELMONI_CONFIG_DIR must be an absolute path");
+            std::process::exit(1);
+        }
+        None => {
+            let Some(config_dir) = dirs::config_dir() else {
+                eprintln!(
+                    "no configuration directory to keep the credentials file in; set HOME or \
+                     TELMONI_CONFIG_DIR"
+                );
+                std::process::exit(1);
+            };
+            config_dir.join("telmoni")
+        }
     };
-    let telmoni_dir = config_dir.join("telmoni");
     // A Keychain dialog waits for a person, who is there only when stderr is
     // a terminal; not stdin, which `login --with-key` is piped even at one.
     let store = CredentialsStore::system(
