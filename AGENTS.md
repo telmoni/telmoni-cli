@@ -17,6 +17,7 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 | `ARCHITECTURE.md` | How the CLI is built, and why, on one page: the repository's one internal document. |
 | [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), and the authority on the wire contract. |
 | [`telmoni/docs`](https://github.com/telmoni/docs) | Sibling repo, checked out as `../docs`: the customer docs (`content/`), the CLI's page (`content/api/cli.mdx`) among them, which the platform's console serves at `/docs`. |
+| [`telmoni/skills`](https://github.com/telmoni/skills) | Sibling repo, checked out as `../skills`: the agent skill, whose `skills/telmoni/references/cli.md` restates this CLI. |
 
 ## Commands
 - **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, checks that the toolchain channel matches `rust-version`, then clippy, build, test, doc and `cargo deny check`, all `--locked`.
@@ -28,7 +29,7 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 - **Output:** stdout carries only the command's output; diagnostics go to stderr or `tracing`.
 
 ## Contracts
-The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/telmoni/telmoni), the `/cli/v1` lanes (`crates/auth/src/handler/cli.rs`, behind the door in `crates/telmoni/src/door.rs`), `/me` (`crates/auth/src/handler/me.rs`) and `/v1` (`crates/auth/src/handler/v1.rs`). Read them before touching `src/auth/` or `src/client.rs`; report a disagreement rather than working around it here.
+The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/telmoni/telmoni), the `/cli/v1` lanes (`cli_router` in `crates/auth/src/lib.rs`: the device flow in `handler/session.rs`, refresh and `/me` in `handler/cli.rs`, revoke in `handler/sessions.rs`), behind the door in `crates/telmoni/src/door.rs`, and `/v1` (`crates/auth/src/handler/v1.rs`). Read them before touching `src/auth/` or `src/client.rs`; report a disagreement rather than working around it here.
 - **Sign-in is the RFC 8628 device flow** behind the `/cli` door, never an identity provider directly: `POST /cli/v1/auth/device`, print the code and URL (open it when a browser exists), poll `POST /cli/v1/auth/device/poll` every `interval` (202 not yet, `slow_down` adds 5 s, 403 denied, 400 expired, 401 a code auth does not know), then `POST /cli/v1/me`. No loopback redirect, listener or PKCE.
 - **Refresh** is `POST /cli/v1/auth/refresh` with `{ refreshToken, sessionRowId }`. **Sign-out** is `POST /cli/v1/sessions/{sessionRowId}/revoke`, with `x-organization-id` when an organization is cached, then the saved login goes whatever the answer.
 - **A 401** says by its problem type what ended. `unauthenticated` on `/cli/v1/me` or revoke, and `unauthenticated` or `invalid-token` on refresh, end the session: delete the saved login, print "run `telmoni login`", don't retry. `token-expired` or `invalid-token` on `/cli/v1/me` or revoke get one refresh and one retry: the sweep turns an expired bearer's `token-expired` into `invalid-token`. Any other 401 ends nothing: `service-credential-rejected` is the console's own hop to the server failing. A 401 under an API key on `/v1` leaves the saved login alone; a 5xx never deletes it.
@@ -50,12 +51,12 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 ## Git Rules
 - Commit only when asked: never `git add` or `git commit` unprompted.
 - Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`) of 1–5 lines and the sign-off: a subject, then optionally a blank line and up to 3 lines on *why*. No file lists, test output, AI signatures or `Co-authored-by` trailers.
-- Every commit is signed off by the developer it is made for, certifying the [Developer Certificate of Origin](https://developercertificate.org/): `git commit -s` adds `Signed-off-by: Name <email>` from git's `user.name` and `user.email`, which name a person, never an agent. A merge commit too: a branch is merged in a clone, `git merge --no-ff --signoff`, and pushed, never from GitHub's merge button, whose commit carries none.
+- Every commit is signed off by the developer it is made for, certifying the [Developer Certificate of Origin](https://developercertificate.org/): `git commit -s` adds `Signed-off-by: Name <email>` from git's `user.name` and `user.email`, which name a person, never an agent.
 - No branches, worktrees, pushes or pull requests.
 
 ## Definition of Done
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
 - [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
-- [ ] A change a user can see names the customer pages it leaves wrong (`content/api/cli.mdx` in `telmoni/docs`).
+- [ ] A change a user can see names the pages it leaves wrong (`content/api/cli.mdx` in `telmoni/docs`, `skills/telmoni/references/cli.md` in `telmoni/skills`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).
