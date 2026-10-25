@@ -31,13 +31,11 @@ pub struct LoginArgs {
     pub no_browser: bool,
 }
 
-/// Validates that an API key starts with `telmoni_`, has a non-empty payload, and contains no whitespace.
+/// Validates that an API key starts with `tm_`, has a non-empty payload, and contains no whitespace.
 pub fn validate_api_key(key: &str) -> Result<()> {
-    if !key.starts_with("telmoni_")
-        || key.len() <= "telmoni_".len()
-        || key.chars().any(|c| c.is_whitespace())
+    if !key.starts_with("tm_") || key.len() <= "tm_".len() || key.chars().any(|c| c.is_whitespace())
     {
-        bail!("an API key starts with telmoni_ and has no spaces");
+        bail!("an API key starts with tm_ and has no spaces");
     }
     Ok(())
 }

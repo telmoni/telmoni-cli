@@ -160,7 +160,6 @@ fn answer_slot(env_key: Option<&str>) -> Result<String> {
     let Some(value) = env_key else {
         bail!("use_api_key_env answers for the key in TELMONI_API_KEY, which is not set");
     };
-    env_key_digest(value).context(
-        "TELMONI_API_KEY gives no API key: an API key starts with telmoni_ and has no spaces",
-    )
+    env_key_digest(value)
+        .context("TELMONI_API_KEY gives no API key: an API key starts with tm_ and has no spaces")
 }

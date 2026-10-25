@@ -214,7 +214,7 @@ pub fn loggable_url(url: &str) -> String {
 fn loggable_path(path: &str) -> String {
     path.split('/')
         .map(|segment| {
-            if segment.contains("telmoni_") {
+            if segment.contains("tm_") {
                 "…"
             } else {
                 segment

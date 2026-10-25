@@ -245,7 +245,7 @@ fn api_key_sign_in_and_out() {
     let out = sandbox.run_with_input(&["login", "--with-key"], &env, "not-a-key\n");
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains("an API key starts with telmoni_"),
+        stderr(&out).contains("an API key starts with tm_"),
         "{}",
         stderr(&out)
     );
@@ -256,7 +256,7 @@ fn api_key_sign_in_and_out() {
     assert_eq!(out.status.code(), Some(1));
     assert!(!saved(&creds));
 
-    let out = sandbox.run_with_input(&["-v", "login", "--with-key"], &env, "telmoni_secret_key\n");
+    let out = sandbox.run_with_input(&["-v", "login", "--with-key"], &env, "tm_secret_key\n");
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
@@ -288,8 +288,8 @@ fn api_key_sign_in_and_out() {
     outputs.push(out);
 
     for out in &outputs {
-        assert!(!stdout(out).contains("telmoni_secret_key"));
-        assert!(!stderr(out).contains("telmoni_secret_key"));
+        assert!(!stdout(out).contains("tm_secret_key"));
+        assert!(!stderr(out).contains("tm_secret_key"));
     }
 }
 
@@ -326,17 +326,10 @@ fn a_key_for_one_command() {
 
     // A key in the variable is used at once: the refused connection, not
     // "Not signed in", is what stops it.
-    let out = sandbox.run(
-        &["status"],
-        &[endpoint, ("TELMONI_API_KEY", "telmoni_from_env")],
-    );
+    let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_API_KEY", "tm_from_env")]);
     assert_eq!(out.status.code(), Some(1));
     assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
-    assert!(
-        !stderr(&out).contains("telmoni_from_env"),
-        "{}",
-        stderr(&out)
-    );
+    assert!(!stderr(&out).contains("tm_from_env"), "{}", stderr(&out));
 
     let out = sandbox.run(&["config", "set", "api_key_helper", "exit 4"], &[]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -348,10 +341,7 @@ fn a_key_for_one_command() {
         stderr(&out)
     );
 
-    let out = sandbox.run(
-        &["logout"],
-        &[endpoint, ("TELMONI_API_KEY", "telmoni_from_env")],
-    );
+    let out = sandbox.run(&["logout"], &[endpoint, ("TELMONI_API_KEY", "tm_from_env")]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
         stderr(&out).contains("note: TELMONI_API_KEY is set"),
@@ -371,7 +361,7 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
     let sandbox = Sandbox::new();
     let path = sandbox.telmoni_dir().join("config.json");
     let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
-    let key = ("TELMONI_API_KEY", "telmoni_from_env");
+    let key = ("TELMONI_API_KEY", "tm_from_env");
 
     let out = sandbox.run(&["config", "set", "use_api_key_env", "false"], &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -385,10 +375,10 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
     assert!(out.status.success(), "{}", stderr(&out));
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(
-        written.contains("647c77194659049b8ea5897fcce18f01cf6d076edd6c200655ff7853e3b922a9"),
+        written.contains("d0af774cf641c2c0ce1a0433d9acf0c5ae3859e265ba00bc480db6c709e23ee4"),
         "{written}"
     );
-    assert!(!written.contains("telmoni_from_env"), "{written}");
+    assert!(!written.contains("tm_from_env"), "{written}");
 
     let out = sandbox.run(&["config", "get", "use_api_key_env"], &[key]);
     assert_eq!(stdout(&out), "false\n");
@@ -411,11 +401,7 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
         // The refused connection, not "Not signed in", is what stops it.
         assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
         assert!(!stderr(&out).contains("Use it ahead"), "{}", stderr(&out));
-        assert!(
-            !stderr(&out).contains("telmoni_from_env"),
-            "{}",
-            stderr(&out)
-        );
+        assert!(!stderr(&out).contains("tm_from_env"), "{}", stderr(&out));
     }
 
     let out = sandbox.run(&["logout"], &[endpoint, key]);

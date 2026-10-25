@@ -147,7 +147,7 @@ fn test_credentials_round_trip() {
         person: None,
         organizations: Vec::new(),
         active_organization_id: None,
-        api_key: Some("telmoni_secret_key".to_string()),
+        api_key: Some("tm_secret_key".to_string()),
         updated_at: 1790000050,
     };
 
@@ -1105,12 +1105,12 @@ fn test_endpoint_precedence() {
 fn test_api_key_validation() {
     use telmoni_cli::commands::login::validate_api_key;
 
-    assert!(validate_api_key("telmoni_abc123_xyz").is_ok());
+    assert!(validate_api_key("tm_abc123_xyz").is_ok());
     assert!(validate_api_key("sk_live_123").is_err());
-    assert!(validate_api_key("telmoni_abc 123").is_err());
-    assert!(validate_api_key("telmoni_abc\t123").is_err());
-    assert!(validate_api_key("telmoni_abc\n123").is_err());
-    assert!(validate_api_key("telmoni_").is_err());
+    assert!(validate_api_key("tm_abc 123").is_err());
+    assert!(validate_api_key("tm_abc\t123").is_err());
+    assert!(validate_api_key("tm_abc\n123").is_err());
+    assert!(validate_api_key("tm_").is_err());
 }
 
 // 11. API key login and status
@@ -1135,7 +1135,7 @@ async fn test_api_key_login_and_status() {
         &store,
         &config,
         None,
-        || Ok("telmoni_test_api_key\n".to_string()),
+        || Ok("tm_test_api_key\n".to_string()),
         |_: &str| -> std::io::Result<()> { panic!("an API key login opens no browser") },
         |_| async { panic!("an API key login does not poll") },
     )
@@ -1146,7 +1146,7 @@ async fn test_api_key_login_and_status() {
 
     let creds = store.load().unwrap().unwrap();
     assert_eq!(creds.auth_type, AuthType::ApiKey);
-    assert_eq!(creds.api_key.as_deref(), Some("telmoni_test_api_key"));
+    assert_eq!(creds.api_key.as_deref(), Some("tm_test_api_key"));
 
     // Status calls /v1/organization
     transport.push_answer(
@@ -1173,7 +1173,7 @@ async fn test_api_key_login_and_status() {
     let reqs = transport.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].url, "https://telmoni.com/v1/organization");
-    assert_eq!(reqs[0].bearer.as_deref(), Some("telmoni_test_api_key"));
+    assert_eq!(reqs[0].bearer.as_deref(), Some("tm_test_api_key"));
 }
 
 // 12. TELMONI_ORG env validation
@@ -1614,7 +1614,7 @@ async fn test_organization_wire_shape() {
     }"#,
     );
 
-    let org = fetch_v1_organization(&transport, "https://telmoni.com", "telmoni_api_token")
+    let org = fetch_v1_organization(&transport, "https://telmoni.com", "tm_api_token")
         .await
         .unwrap();
     assert_eq!(org.organization_id, "org_public");
@@ -2126,14 +2126,14 @@ fn test_no_secret_in_an_address_a_log_line_shows() {
             "https://proxy.example.com:8443/cli/v1/me",
         ),
         (
-            "https://api.telmoni.com/v1/telmoni_4p1k3y/members",
+            "https://api.telmoni.com/v1/tm_4p1k3y/members",
             "https://api.telmoni.com/v1/…/members",
         ),
         (
-            "https://api.telmoni.com/v1/'telmoni_4p1k3y'",
+            "https://api.telmoni.com/v1/'tm_4p1k3y'",
             "https://api.telmoni.com/v1/…",
         ),
-        ("not a url/telmoni_4p1k3y/x", "not a url/…/x"),
+        ("not a url/tm_4p1k3y/x", "not a url/…/x"),
     ] {
         assert_eq!(loggable_url(url), shown, "{url}");
     }
@@ -2487,7 +2487,7 @@ fn test_debug_never_prints_a_secret() {
     device.refresh_token = Some("secret_refresh".to_string());
     let api_key = Credentials::for_api_key(
         "https://telmoni.com".to_string(),
-        "telmoni_secret_key".to_string(),
+        "tm_secret_key".to_string(),
     );
     let request = LaneRequest {
         method: reqwest::Method::POST,
@@ -2509,7 +2509,7 @@ fn test_debug_never_prints_a_secret() {
         .unwrap(),
     );
     let supplied = SuppliedKey {
-        key: "telmoni_secret_key".to_string(),
+        key: "tm_secret_key".to_string(),
         source: KeySource::Environment,
     };
 
@@ -2527,7 +2527,7 @@ fn test_debug_never_prints_a_secret() {
             "secret_access",
             "secret_refresh",
             "secret_device_code",
-            "telmoni_secret_key",
+            "tm_secret_key",
         ] {
             assert!(!out.contains(secret), "{secret} printed in {out}");
         }
@@ -2754,7 +2754,7 @@ async fn test_logout_with_an_api_key() {
     store
         .save(&Credentials::for_api_key(
             "https://telmoni.com".to_string(),
-            "telmoni_key".to_string(),
+            "tm_key".to_string(),
         ))
         .unwrap();
 
@@ -2825,7 +2825,7 @@ async fn test_network_failures_keep_credentials() {
     store
         .save(&Credentials::for_api_key(
             "https://telmoni.com".to_string(),
-            "telmoni_key".to_string(),
+            "tm_key".to_string(),
         ))
         .unwrap();
     transport.push_error(anyhow::anyhow!(
@@ -3124,14 +3124,14 @@ async fn test_a_supplied_key_and_where_it_came_from() {
 
     let never = |_: String| async { panic!("the helper runs only without TELMONI_API_KEY") };
     let key = supplied_key(
-        Some("telmoni_env_key".to_string()),
+        Some("tm_env_key".to_string()),
         Some("printf ignored"),
         never,
     )
     .await
     .unwrap()
     .unwrap();
-    assert_eq!(key.key, "telmoni_env_key");
+    assert_eq!(key.key, "tm_env_key");
     assert_eq!(key.source, KeySource::Environment);
 
     let ran = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -3139,14 +3139,14 @@ async fn test_a_supplied_key_and_where_it_came_from() {
         let ran = ran.clone();
         async move {
             ran.lock().unwrap().push(command);
-            Ok("telmoni_helper_key\n".to_string())
+            Ok("tm_helper_key\n".to_string())
         }
     };
     let key = supplied_key(None, Some("  op read op://vault/telmoni  "), helper)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(key.key, "telmoni_helper_key");
+    assert_eq!(key.key, "tm_helper_key");
     assert_eq!(key.source, KeySource::Helper);
     assert_eq!(*ran.lock().unwrap(), ["op read op://vault/telmoni"]);
 
@@ -3168,7 +3168,7 @@ async fn test_a_supplied_key_and_where_it_came_from() {
     assert!(err.starts_with("TELMONI_API_KEY gives no API key"), "{err}");
     assert!(!err.contains("sk_live_secret"), "{err}");
 
-    let printed = |_: String| async { Ok("telmoni_two words".to_string()) };
+    let printed = |_: String| async { Ok("tm_two words".to_string()) };
     let err = supplied_key(None, Some("helper"), printed)
         .await
         .unwrap_err()
@@ -3185,18 +3185,18 @@ async fn test_the_helper_runs_through_the_shell() {
     use telmoni_cli::auth::run_helper;
 
     assert_eq!(
-        run_helper("printf 'telmoni_from_helper\\n'".to_string())
+        run_helper("printf 'tm_from_helper\\n'".to_string())
             .await
             .unwrap(),
-        "telmoni_from_helper\n"
+        "tm_from_helper\n"
     );
 
-    let err = run_helper("printf telmoni_unseen; exit 3".to_string())
+    let err = run_helper("printf tm_unseen; exit 3".to_string())
         .await
         .unwrap_err()
         .to_string();
     assert!(err.starts_with("api_key_helper failed"), "{err}");
-    assert!(!err.contains("telmoni_unseen"), "{err}");
+    assert!(!err.contains("tm_unseen"), "{err}");
 
     let err = run_helper("true".to_string())
         .await
@@ -3221,7 +3221,7 @@ async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
         r#"{ "organization_id": "org_key", "slug": "key-org", "name": "Key Org", "owner": null }"#,
     );
     let key = SuppliedKey {
-        key: "telmoni_supplied".to_string(),
+        key: "tm_supplied".to_string(),
         source: KeySource::Environment,
     };
 
@@ -3237,7 +3237,7 @@ async fn test_status_with_a_supplied_key_leaves_the_saved_login() {
     let reqs = transport.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].url, "https://env.example/v1/organization");
-    assert_eq!(reqs[0].bearer.as_deref(), Some("telmoni_supplied"));
+    assert_eq!(reqs[0].bearer.as_deref(), Some("tm_supplied"));
     assert_eq!(store.load().unwrap(), Some(saved));
 }
 
@@ -3251,32 +3251,29 @@ fn test_the_variables_key_is_asked_about_once_at_a_terminal() {
     use std::collections::BTreeMap;
     use telmoni_cli::auth::{EnvKeyUse, env_key_digest, env_key_use};
 
-    let digest = "bd93552844211d9d3bc3987cc0848a2ad825b18748509203deb8540c41b52c54";
-    assert_eq!(env_key_digest(" telmoni_abc\n").as_deref(), Some(digest));
+    let digest = "d57b1e80b8e5fd7fec810e1574cc5ae9c4ca3f9cef18b9eead633b613cd66ee3";
+    assert_eq!(env_key_digest(" tm_abc\n").as_deref(), Some(digest));
     assert_eq!(env_key_digest("sk_live_wrong"), None);
 
     let mut answers = BTreeMap::new();
-    assert_eq!(
-        env_key_use("telmoni_abc", &answers, true, false),
-        EnvKeyUse::Ask
-    );
+    assert_eq!(env_key_use("tm_abc", &answers, true, false), EnvKeyUse::Ask);
     answers.insert(digest.to_string(), true);
     assert_eq!(
-        env_key_use(" telmoni_abc ", &answers, true, false),
+        env_key_use(" tm_abc ", &answers, true, false),
         EnvKeyUse::Use
     );
     answers.insert(digest.to_string(), false);
     assert_eq!(
-        env_key_use("telmoni_abc", &answers, true, false),
+        env_key_use("tm_abc", &answers, true, false),
         EnvKeyUse::PassOver
     );
     assert_eq!(
-        env_key_use("telmoni_rotated", &answers, true, false),
+        env_key_use("tm_rotated", &answers, true, false),
         EnvKeyUse::Ask
     );
 
     for (at_terminal, json) in [(false, false), (true, true), (false, true)] {
-        for key in ["telmoni_abc", "telmoni_rotated"] {
+        for key in ["tm_abc", "tm_rotated"] {
             assert_eq!(
                 env_key_use(key, &answers, at_terminal, json),
                 EnvKeyUse::Use,
@@ -3305,7 +3302,7 @@ fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
     let dir = std::env::temp_dir().join(format!("telmoni-answers-{}-{}", std::process::id(), n));
     let _ = std::fs::remove_dir_all(&dir);
     let path = dir.join("telmoni").join("config.json");
-    let key = Some(" telmoni_kept ");
+    let key = Some(" tm_kept ");
 
     assert_eq!(
         get_config_value(&path, "use_api_key_env", key).unwrap(),
@@ -3313,27 +3310,27 @@ fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
     );
     set_config_value(&path, "use_api_key_env", "true", key).unwrap();
     assert_eq!(
-        get_config_value(&path, "use_api_key_env", Some("telmoni_kept"))
+        get_config_value(&path, "use_api_key_env", Some("tm_kept"))
             .unwrap()
             .as_deref(),
         Some("true")
     );
     assert_eq!(
-        get_config_value(&path, "use_api_key_env", Some("telmoni_other")).unwrap(),
+        get_config_value(&path, "use_api_key_env", Some("tm_other")).unwrap(),
         None
     );
-    set_api_key_answer(&path, "telmoni_kept", false).unwrap();
+    set_api_key_answer(&path, "tm_kept", false).unwrap();
     let config = load_config(&path).unwrap();
     assert_eq!(config.api_key_answers.len(), 1);
     assert_eq!(
         config
             .api_key_answers
-            .get(&env_key_digest("telmoni_kept").unwrap()),
+            .get(&env_key_digest("tm_kept").unwrap()),
         Some(&false)
     );
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.contains("api_key_answers"), "{written}");
-    assert!(!written.contains("telmoni_kept"), "{written}");
+    assert!(!written.contains("tm_kept"), "{written}");
 
     for (value, env_key, refusal) in [
         ("true", None, "TELMONI_API_KEY, which is not set"),

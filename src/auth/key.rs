@@ -84,7 +84,7 @@ where
     let key = key.trim().to_owned();
     if validate_api_key(&key).is_err() {
         bail!(
-            "{} gives no API key: an API key starts with telmoni_ and has no spaces",
+            "{} gives no API key: an API key starts with tm_ and has no spaces",
             source.name()
         );
     }
