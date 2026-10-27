@@ -15,8 +15,7 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 | `tests/` | Mock-based suites: no network, no sleeps. |
 | `xtask/` | The gate (`cargo xtask ci`) and packaging (`cargo xtask dist`). |
 | `ARCHITECTURE.md` | How the CLI is built, and why, on one page: the repository's one internal document. |
-| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), and the authority on the wire contract. |
-| [`telmoni/docs`](https://github.com/telmoni/docs) | Sibling repo, checked out as `../docs`: the customer docs (`content/`), the CLI's page (`content/api/cli.mdx`) among them, which the platform's console serves at `/docs`. |
+| [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI's page (`api/cli.mdx`) among them, which its console serves at `/docs`. |
 | [`telmoni/skills`](https://github.com/telmoni/skills) | Sibling repo, checked out as `../skills`: the agent skill, whose `skills/telmoni/references/cli.md` restates this CLI. |
 
 ## Commands
@@ -58,5 +57,5 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
 - [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
-- [ ] A change a user can see names the pages it leaves wrong (`content/api/cli.mdx` in `telmoni/docs`, `skills/telmoni/references/cli.md` in `telmoni/skills`).
+- [ ] A change a user can see names the pages it leaves wrong (`web/content/docs/api/cli.mdx` in `telmoni/telmoni`, `skills/telmoni/references/cli.md` in `telmoni/skills`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).
