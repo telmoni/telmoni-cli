@@ -343,7 +343,7 @@ async fn test_poll_once_outcomes() {
     // 400 Expired, as auth answers a code approved too late
     transport.push_answer(
         400,
-        r#"{"type":"/errors/auth/bad-request","title":"bad request","status":400,"detail":"the device code expired before it was approved; start again"}"#,
+        r#"{"type":"/errors/bad-request","title":"bad request","status":400,"detail":"the device code expired before it was approved; start again"}"#,
     );
     let outcome = poll_once(&transport, "https://telmoni.com", "code123")
         .await
@@ -1905,7 +1905,7 @@ async fn test_logout_retries_revoke_with_current_organization() {
     transport.push_answer(403, forbidden);
     transport.push_answer(
         400,
-        r#"{"type":"/errors/auth/bad-request","title":"bad request","status":400,"detail":"missing x-organization-id header: name the organization this is recorded on"}"#,
+        r#"{"type":"/errors/bad-request","title":"bad request","status":400,"detail":"missing x-organization-id header: name the organization this is recorded on"}"#,
     );
     transport.push_answer(
         200,
