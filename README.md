@@ -8,7 +8,7 @@
 ## Install
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh
+curl -fsSL https://telmoni.com/install.sh | sh
 ```
 
 The installer fetches the latest release for x86_64 Linux, checks it against the release's `SHA256SUMS`, and installs `telmoni` into `/usr/local/bin` or `~/.local/bin`. `TELMONI_VERSION` pins a release and `TELMONI_INSTALL_DIR` picks the directory. On another platform, a Mac among them until its build is signed, build from source with the Rust toolchain:

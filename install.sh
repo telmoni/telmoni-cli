@@ -1,10 +1,10 @@
 #!/bin/sh
-# install.sh: `curl -fsSL https://raw.githubusercontent.com/telmoni/telmoni-cli/main/install.sh | sh`
+# install.sh: `curl -fsSL https://telmoni.com/install.sh | sh`
 #
 # Installs the `telmoni` CLI for this host.
 #
 # Environment:
-#   TELMONI_VERSION=0.1.1       that tag's assets rather than the latest release
+#   TELMONI_VERSION=0.2.0       that tag's assets rather than the latest release
 #   TELMONI_INSTALL_DIR         override installation directory (default: /usr/local/bin or ~/.local/bin)
 #   TELMONI_INSTALL_DRY_RUN=1   print each command that would change this machine, run none
 
@@ -102,14 +102,15 @@ if [ -n "${TELMONI_VERSION:-}" ]; then
     RELEASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 else
     status "Looking up latest release..."
-    LATEST_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)
-    if [ -z "$LATEST_JSON" ]; then
-        error "Could not fetch latest release info from GitHub API. You can specify a version explicitly: TELMONI_VERSION=0.1.1 sh install.sh"
-    fi
-    TAG=$(echo "$LATEST_JSON" | grep '"tag_name":' | head -1 | cut -d '"' -f 4)
-    if [ -z "$TAG" ]; then
-        error "Could not parse latest release tag from GitHub."
-    fi
+    # The release page redirects to its tag: no API, no rate limit, no JSON.
+    LATEST_URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+        "https://github.com/${REPO}/releases/latest") \
+        || error "Could not reach GitHub. Pin a version: TELMONI_VERSION=0.2.0 sh install.sh"
+    TAG="${LATEST_URL##*/}"
+    case "$TAG" in
+        v[0-9]*) ;;
+        *) error "Could not read the latest release tag from ${LATEST_URL}." ;;
+    esac
     RELEASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 fi
 
@@ -167,10 +168,10 @@ fi
 status "Extracting ${ARCHIVE}..."
 run tar -xzf "$TEMP_DIR/$ARCHIVE" -C "$TEMP_DIR"
 
-# Ensure install directory exists
+# Ensure install directory exists: as this user where it can, as root only where it must
 if [ ! -d "$INSTALL_DIR" ]; then
     status "Creating installation directory: ${INSTALL_DIR}"
-    as_admin mkdir -p "$INSTALL_DIR"
+    run mkdir -p "$INSTALL_DIR" 2>/dev/null || as_admin mkdir -p "$INSTALL_DIR"
 fi
 
 status "Installing binary to ${INSTALL_DIR}/${BIN}..."
