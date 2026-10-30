@@ -27,14 +27,18 @@ enum Cmd {
     /// Host-safe gate: fmt · toolchain = `rust-version` · clippy `-D warnings` ·
     /// build · test · docs · cargo-deny.
     Ci,
-    /// Package this host's release under `dist/`.
-    Dist,
+    /// Package the release under `dist/`.
+    Dist {
+        /// The target triple to build for, else this host's.
+        #[arg(long)]
+        target: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Ci => ci(),
-        Cmd::Dist => dist::dist(),
+        Cmd::Dist { target } => dist::dist(target.as_deref()),
     }
 }
 

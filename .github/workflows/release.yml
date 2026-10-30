@@ -181,8 +181,18 @@ jobs:
       - name: Install the toolchain components
         run: rustup component add rustfmt clippy
 
+      # Static, so it runs on any x86_64 Linux, whatever its glibc or none.
+      - name: Install the musl target
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get install --yes musl-tools
+
+      # The archive's third-party notices (about.toml).
+      - name: Install cargo-about
+        run: cargo install cargo-about --version 0.9.3 --locked --features cli
+
       - name: Build the release artifacts
-        run: cargo xtask dist
+        run: cargo xtask dist --target x86_64-unknown-linux-musl
 
       # Compiled as crates.io will compile it, so publishing need not.
       - name: Package and verify the crate
