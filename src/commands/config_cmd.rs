@@ -6,7 +6,9 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::auth::key::env_key_digest;
-use crate::config::{DEFAULT_TELMONI_ENDPOINT, get_config_value, load_config, set_config_value};
+use crate::config::{
+    ConfigKey, DEFAULT_TELMONI_ENDPOINT, get_config_value, load_config, set_config_value,
+};
 
 /// Arguments for `telmoni config`.
 #[derive(Debug, Args)]
@@ -19,13 +21,13 @@ pub struct ConfigArgs {
 pub enum ConfigSubcommand {
     /// Get a configuration parameter.
     Get {
-        /// The setting key (endpoint, output_format, api_key_helper, use_api_key_env).
-        key: String,
+        /// The setting key.
+        key: ConfigKey,
     },
     /// Set a configuration parameter.
     Set {
-        /// The setting key (endpoint, output_format, api_key_helper, use_api_key_env).
-        key: String,
+        /// The setting key.
+        key: ConfigKey,
         /// The value to assign.
         value: String,
     },
@@ -38,16 +40,17 @@ pub enum ConfigSubcommand {
 /// `use_api_key_env` answers for.
 pub fn execute(args: ConfigArgs, path: &Path, env_key: Option<&str>) -> Result<()> {
     match args.command {
-        ConfigSubcommand::Get { key } => match get_config_value(path, &key, env_key)? {
+        ConfigSubcommand::Get { key } => match get_config_value(path, key, env_key)? {
             Some(val) => println!("{val}"),
             None => println!("(not set)"),
         },
         ConfigSubcommand::Set { key, value } => {
-            set_config_value(path, &key, &value, env_key)?;
-            if key == "use_api_key_env" {
-                println!("✓ Set {key} = {value}, for the key now in TELMONI_API_KEY");
+            set_config_value(path, key, &value, env_key)?;
+            let name = key.name();
+            if key == ConfigKey::UseApiKeyEnv {
+                println!("✓ Set {name} = {value}, for the key now in TELMONI_API_KEY");
             } else {
-                println!("✓ Set {key} = {value}");
+                println!("✓ Set {name} = {value}");
             }
         }
         ConfigSubcommand::List => {

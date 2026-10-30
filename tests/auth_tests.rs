@@ -7,10 +7,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use telmoni_cli::auth::device::{
-    AuthnResult, Organization, PollOutcome, poll_once, poll_until_granted, refresh_if_needed,
+    AuthnResult, Me, Organization, PollOutcome, poll_once, poll_until_granted, refresh_if_needed,
 };
 use telmoni_cli::auth::storage::{
-    AuthType, Credentials, CredentialsStore, StoredOrganization, StoredPerson,
+    Credentials, CredentialsStore, DeviceSession, SavedKey, StoredOrganization, StoredPerson,
+    unix_now,
 };
 use telmoni_cli::commands::{logout, org};
 use telmoni_cli::transport::{
@@ -26,6 +27,19 @@ fn temp_store() -> CredentialsStore {
         let _ = std::fs::remove_file(&path);
     }
     CredentialsStore::new(path)
+}
+
+/// The device session `store` holds.
+#[expect(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "test scaffolding: anything but a device session fails the test"
+)]
+fn loaded_session(store: &CredentialsStore) -> DeviceSession {
+    match store.load().unwrap() {
+        Some(Credentials::Device(session)) => session,
+        other => panic!("expected a device session, found {other:?}"),
+    }
 }
 
 #[derive(Default, Clone)]
@@ -56,9 +70,20 @@ impl MockTransport {
     }
 }
 
+/// More requests than any test makes: a loop that never ends fails here,
+/// rather than growing the recorded list without bound.
+const MOST_REQUESTS: usize = 200;
+
 impl Transport for MockTransport {
+    #[expect(
+        clippy::panic,
+        reason = "test scaffolding: a runaway loop fails the test at once"
+    )]
     async fn send(&self, req: LaneRequest) -> anyhow::Result<LaneAnswer> {
         if let Ok(mut requests) = self.requests.lock() {
+            if requests.len() >= MOST_REQUESTS {
+                panic!("more than {MOST_REQUESTS} requests: a loop that never ends");
+            }
             requests.push(req);
         }
         let next = self
@@ -71,6 +96,26 @@ impl Transport for MockTransport {
             None => anyhow::bail!("unexpected request to MockTransport"),
         }
     }
+}
+
+// 0. The platform's own answers decode: `tests/fixtures/{me,authn}.json` are
+//    copies of the core's `contract/responses/auth/`, which its handlers
+//    generate, so a renamed or dropped field fails here
+#[test]
+fn the_platforms_answers_decode() {
+    let me: Me = serde_json::from_str(include_str!("fixtures/me.json")).unwrap();
+    assert_eq!(me.session_row_id, "0192f3a1-7c2e-7b4d-9a61-3c5e8f0d2f04");
+    assert_eq!(me.organizations[0].label(), "Acme");
+    assert_eq!(
+        me.active_organization_id.as_deref(),
+        Some("org_9TzQ1wXe5RkN8bVc")
+    );
+    let granted: AuthnResult = serde_json::from_str(include_str!("fixtures/authn.json")).unwrap();
+    assert_eq!(
+        granted.refresh_token.as_deref(),
+        Some("rt_not_a_real_token")
+    );
+    assert_eq!(granted.expires_in, 900);
 }
 
 // 1. User-Agent string shape
@@ -105,18 +150,17 @@ fn test_credentials_round_trip() {
     assert!(store.load().unwrap().is_none());
 
     // Device credentials with some nulls
-    let device_creds = Credentials {
-        auth_type: AuthType::Device,
+    let device_creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_123".to_string()),
+        access_token: "token_123".to_string(),
         refresh_token: None,
-        expires_at: Some(1790000000),
-        session_row_id: None,
-        person: Some(StoredPerson {
+        expires_at: 1790000000,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
             slug: "acme-corp".to_string(),
@@ -124,32 +168,24 @@ fn test_credentials_round_trip() {
             role: "owner".to_string(),
         }],
         active_organization_id: None,
-        api_key: None,
         updated_at: 1790000000,
     };
 
     store.save(&device_creds).unwrap();
-    let loaded = store.load().unwrap().expect("should load credentials");
+    let loaded = loaded_session(&store);
     assert_eq!(loaded, device_creds);
     assert!(loaded.refresh_token.is_none());
-    assert!(loaded.session_row_id.is_none());
     assert!(loaded.active_organization_id.is_none());
-    assert!(loaded.api_key.is_none());
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&store.path).unwrap()).unwrap();
+    assert_eq!(on_disk["auth_type"], "device");
 
     // API Key credentials
-    let api_creds = Credentials {
-        auth_type: AuthType::ApiKey,
+    let api_creds = Credentials::ApiKey(SavedKey {
         endpoint: "https://custom.telmoni.com".to_string(),
-        access_token: None,
-        refresh_token: None,
-        expires_at: None,
-        session_row_id: None,
-        person: None,
-        organizations: Vec::new(),
-        active_organization_id: None,
-        api_key: Some("tm_secret_key".to_string()),
+        api_key: "tm_secret_key".to_string(),
         updated_at: 1790000050,
-    };
+    });
 
     store.save(&api_creds).unwrap();
     let loaded_api = store.load().unwrap().expect("should load api credentials");
@@ -163,6 +199,24 @@ fn test_credentials_round_trip() {
     std::fs::write(
         &store.path,
         r#"{"auth_type":"device","endpoint":"https://telmoni.com","updated_at":100}"#,
+    )
+    .unwrap();
+    assert!(store.load().unwrap().is_none());
+
+    // So does one missing the session row, which revoke and refresh name
+    let mut without_row = serde_json::to_value(&device_creds).unwrap();
+    without_row["auth_type"] = "device".into();
+    without_row
+        .as_object_mut()
+        .unwrap()
+        .remove("session_row_id");
+    std::fs::write(&store.path, without_row.to_string()).unwrap();
+    assert!(store.load().unwrap().is_none());
+
+    // And an API key file without its key
+    std::fs::write(
+        &store.path,
+        r#"{"auth_type":"api_key","endpoint":"https://telmoni.com","updated_at":100}"#,
     )
     .unwrap();
     assert!(store.load().unwrap().is_none());
@@ -353,6 +407,21 @@ async fn test_poll_once_outcomes() {
         PollOutcome::Failed(
             "bad request: the device code expired before it was approved; start again".to_string()
         )
+    );
+
+    // A 5xx, or no answer at all, is no verdict: polled again, slower
+    transport.push_answer(503, SERVER_UNAVAILABLE);
+    let outcome = poll_once(&transport, "https://telmoni.com", "code123")
+        .await
+        .unwrap();
+    assert!(matches!(outcome, PollOutcome::Unanswered(_)), "{outcome:?}");
+    transport.push_error(anyhow::anyhow!("timed out waiting for the poll"));
+    let outcome = poll_once(&transport, "https://telmoni.com", "code123")
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        PollOutcome::Unanswered("timed out waiting for the poll".to_string())
     );
 }
 
@@ -545,6 +614,48 @@ async fn test_poll_until_granted_scenarios() {
         assert_eq!(*sleeps.lock().unwrap(), vec![Duration::from_secs(5)]);
     }
 
+    // Scenario 4b: a platform that never answers is polled ever more slowly,
+    // at most a minute apart, until the code expires
+    {
+        let polls = Arc::new(Mutex::new(0));
+        let polled = polls.clone();
+        let sleeps = Arc::new(Mutex::new(Vec::new()));
+        let slept = sleeps.clone();
+        let sim_now = Arc::new(Mutex::new(Instant::now()));
+        let advanced = sim_now.clone();
+        let read = sim_now.clone();
+
+        let err = poll_until_granted(
+            Duration::from_secs(5),
+            Duration::from_secs(200),
+            move || {
+                let polled = polled.clone();
+                async move {
+                    *polled.lock().unwrap() += 1;
+                    Ok(PollOutcome::Unanswered("timed out".to_string()))
+                }
+            },
+            |dur| {
+                let slept = slept.clone();
+                let clock = advanced.clone();
+                async move {
+                    slept.lock().unwrap().push(dur);
+                    *clock.lock().unwrap() += dur;
+                }
+            },
+            move || *read.lock().unwrap(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("expired"), "{err}");
+        assert_eq!(*polls.lock().unwrap(), 6);
+        assert_eq!(
+            *sleeps.lock().unwrap(),
+            [5, 10, 20, 40, 60, 60, 60].map(Duration::from_secs)
+        );
+    }
+
     // Scenario 5: local expiry ending the loop without an extra poll
     {
         let poll_count = Arc::new(Mutex::new(0));
@@ -603,21 +714,19 @@ async fn test_refresh_if_needed() {
     let transport = MockTransport::new();
 
     // 200 saving new tokens
-    let mut creds = Credentials {
-        auth_type: AuthType::Device,
+    let mut creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("old_at".to_string()),
+        access_token: "old_at".to_string(),
         refresh_token: Some("old_rt".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() - 10), // expired
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() - 10, // expired
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: Vec::new(),
         active_organization_id: None,
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -635,17 +744,17 @@ async fn test_refresh_if_needed() {
     refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
-    assert_eq!(creds.access_token.as_deref(), Some("new_at"));
+    assert_eq!(creds.access_token, "new_at");
     assert_eq!(creds.refresh_token.as_deref(), Some("new_rt"));
 
-    let loaded = store.load().unwrap().unwrap();
-    assert_eq!(loaded.access_token.as_deref(), Some("new_at"));
+    let loaded = loaded_session(&store);
+    assert_eq!(loaded.access_token, "new_at");
     assert_eq!(loaded.refresh_token.as_deref(), Some("new_rt"));
 
     // null refreshToken: the grant spent the one presented, and keeping it
     // would present a spent token next time, which after a short grace ends
     // the whole session
-    creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    creds.expires_at = unix_now() - 10;
     store.save(&creds).unwrap();
 
     transport.push_answer(
@@ -661,13 +770,13 @@ async fn test_refresh_if_needed() {
     refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
-    assert_eq!(creds.access_token.as_deref(), Some("new_at_2"));
+    assert_eq!(creds.access_token, "new_at_2");
     assert_eq!(creds.refresh_token, None);
-    assert_eq!(store.load().unwrap().unwrap().refresh_token, None);
+    assert_eq!(loaded_session(&store).refresh_token, None);
 
     // 401 clearing the file
     creds.refresh_token = Some("rt_again".to_string());
-    creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    creds.expires_at = unix_now() - 10;
     store.save(&creds).unwrap();
 
     transport.push_answer(
@@ -689,7 +798,7 @@ async fn test_refresh_if_needed() {
     // no refresh token held — what a null-token grant leaves behind: nothing
     // to present, so no request, and the file goes as it does on a 401
     creds.refresh_token = None;
-    creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    creds.expires_at = unix_now() - 10;
     store.save(&creds).unwrap();
 
     let err = refresh_if_needed(&transport, &store, &mut creds)
@@ -709,7 +818,7 @@ async fn test_refresh_asked_again_when_unanswered() {
     let transport = MockTransport::new();
     let expiring = || {
         let mut creds = device_creds(&["org_1"], "org_1");
-        creds.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+        creds.expires_at = unix_now() - 10;
         creds
     };
     let take = || std::mem::take(&mut *transport.requests.lock().unwrap());
@@ -722,10 +831,7 @@ async fn test_refresh_asked_again_when_unanswered() {
     refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
-    assert_eq!(
-        store.load().unwrap().unwrap().refresh_token.as_deref(),
-        Some("rt2")
-    );
+    assert_eq!(loaded_session(&store).refresh_token.as_deref(), Some("rt2"));
     let reqs = take();
     assert_eq!(reqs.len(), 2);
     assert_eq!(
@@ -743,7 +849,7 @@ async fn test_refresh_asked_again_when_unanswered() {
     refresh_if_needed(&transport, &store, &mut creds)
         .await
         .unwrap();
-    assert_eq!(creds.access_token.as_deref(), Some("fresh"));
+    assert_eq!(creds.access_token, "fresh");
     assert_eq!(take().len(), 2);
 
     // a refusal is an answer, and is not asked for again
@@ -812,18 +918,17 @@ async fn test_org_switch_logic() {
     let store = temp_store();
     let transport = MockTransport::new();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_123".to_string()),
+        access_token: "token_123".to_string(),
         refresh_token: Some("rt_123".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![
             StoredOrganization {
                 organization_id: "org_1".to_string(),
@@ -839,7 +944,6 @@ async fn test_org_switch_logic() {
             },
         ],
         active_organization_id: Some("org_1".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -898,7 +1002,7 @@ async fn test_org_switch_logic() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
     {
         let reqs = transport.requests.lock().unwrap();
@@ -942,7 +1046,7 @@ async fn test_org_switch_logic() {
     // The answer's list is kept, so `org list` stops showing the organization
     // the person left; and since that was the active one, it gives way to
     // their default.
-    let kept = store.load().unwrap().unwrap();
+    let kept = loaded_session(&store);
     assert_eq!(kept.organizations.len(), 1, "the fresh list is kept");
     assert_eq!(kept.organizations[0].organization_id, "org_1");
     assert_eq!(kept.active_organization_id.as_deref(), Some("org_1"));
@@ -955,18 +1059,17 @@ async fn test_logout_outcomes() {
     let transport = MockTransport::new();
 
     // 9a. Deletes file on 401 at refresh
-    let creds_refresh_401 = Credentials {
-        auth_type: AuthType::Device,
+    let creds_refresh_401 = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("at_1".to_string()),
+        access_token: "at_1".to_string(),
         refresh_token: Some("rt_1".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() - 10), // expired, needs refresh
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() - 10, // expired, needs refresh
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
             slug: "acme".to_string(),
@@ -974,7 +1077,6 @@ async fn test_logout_outcomes() {
             role: "owner".to_string(),
         }],
         active_organization_id: Some("org_1".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds_refresh_401).unwrap();
@@ -996,18 +1098,17 @@ async fn test_logout_outcomes() {
     );
 
     // 9b. Deletes file on 404 at revoke
-    let creds_revoke_404 = Credentials {
-        auth_type: AuthType::Device,
+    let creds_revoke_404 = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("at_valid".to_string()),
+        access_token: "at_valid".to_string(),
         refresh_token: Some("rt_valid".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600), // valid, no refresh
-        session_row_id: Some("0192a3b4-2222-7000-8000-000000000002".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600, // valid, no refresh
+        session_row_id: "0192a3b4-2222-7000-8000-000000000002".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
             slug: "acme".to_string(),
@@ -1015,7 +1116,6 @@ async fn test_logout_outcomes() {
             role: "owner".to_string(),
         }],
         active_organization_id: Some("org_1".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds_revoke_404).unwrap();
@@ -1144,9 +1244,10 @@ async fn test_api_key_login_and_status() {
 
     assert_eq!(transport.requests.lock().unwrap().len(), 0);
 
-    let creds = store.load().unwrap().unwrap();
-    assert_eq!(creds.auth_type, AuthType::ApiKey);
-    assert_eq!(creds.api_key.as_deref(), Some("tm_test_api_key"));
+    let Some(Credentials::ApiKey(saved)) = store.load().unwrap() else {
+        panic!("expected a saved API key");
+    };
+    assert_eq!(saved.api_key, "tm_test_api_key");
 
     // Status calls /v1/organization
     transport.push_answer(
@@ -1186,18 +1287,17 @@ async fn test_telmoni_org_env_validation() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_valid".to_string()),
+        access_token: "token_valid".to_string(),
         refresh_token: Some("rt_valid".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_allowed".to_string(),
             slug: "allowed-org".to_string(),
@@ -1205,7 +1305,6 @@ async fn test_telmoni_org_env_validation() {
             role: "owner".to_string(),
         }],
         active_organization_id: Some("org_allowed".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -1257,18 +1356,17 @@ async fn test_status_updates_cached_credentials() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_original".to_string()),
+        access_token: "token_original".to_string(),
         refresh_token: Some("rt_original".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
             slug: "org-old".to_string(),
@@ -1276,7 +1374,6 @@ async fn test_status_updates_cached_credentials() {
             role: "member".to_string(),
         }],
         active_organization_id: Some("org_1".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -1320,11 +1417,8 @@ async fn test_status_updates_cached_credentials() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
-    assert_eq!(
-        updated.person.unwrap().display_name.as_deref(),
-        Some("Alice Smith")
-    );
+    let updated = loaded_session(&store);
+    assert_eq!(updated.person.display_name.as_deref(), Some("Alice Smith"));
     assert_eq!(updated.organizations.len(), 2);
     assert_eq!(updated.organizations[0].label, "Acme Corp");
     // A URL change moves the slug; the id stays.
@@ -1347,21 +1441,19 @@ async fn test_status_labels_an_organization_as_born() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_original".to_string()),
+        access_token: "token_original".to_string(),
         refresh_token: Some("rt_original".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: Vec::new(),
         active_organization_id: None,
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -1395,7 +1487,7 @@ async fn test_status_labels_an_organization_as_born() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert_eq!(updated.organizations.len(), 1);
     assert_eq!(updated.organizations[0].label, "Alice's organization");
     assert_eq!(updated.organizations[0].slug, "alices-organization");
@@ -1413,21 +1505,19 @@ async fn test_status_in_no_organization() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_original".to_string()),
+        access_token: "token_original".to_string(),
         refresh_token: Some("rt_original".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: Vec::new(),
         active_organization_id: None,
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -1453,7 +1543,7 @@ async fn test_status_in_no_organization() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert!(updated.organizations.is_empty());
     assert_eq!(updated.active_organization_id, None);
 }
@@ -1468,18 +1558,17 @@ async fn test_status_retries_on_token_expired() {
     let transport = MockTransport::new();
     let config = Config::default();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("stale_token".to_string()),
+        access_token: "stale_token".to_string(),
         refresh_token: Some("valid_refresh".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![StoredOrganization {
             organization_id: "org_1".to_string(),
             slug: "org-one".to_string(),
@@ -1487,7 +1576,6 @@ async fn test_status_retries_on_token_expired() {
             role: "owner".to_string(),
         }],
         active_organization_id: Some("org_1".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -1541,8 +1629,8 @@ async fn test_status_retries_on_token_expired() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
-    assert_eq!(updated.access_token.as_deref(), Some("fresh_access_token"));
+    let updated = loaded_session(&store);
+    assert_eq!(updated.access_token, "fresh_access_token");
     assert_eq!(updated.refresh_token.as_deref(), Some("new_refresh_token"));
     assert!(store.path.exists());
 }
@@ -1631,19 +1719,18 @@ fn slug_of(id: &str) -> String {
     id.replace('_', "-")
 }
 
-fn device_creds(orgs: &[&str], active: &str) -> Credentials {
-    Credentials {
-        auth_type: AuthType::Device,
+fn device_creds(orgs: &[&str], active: &str) -> DeviceSession {
+    DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("at".to_string()),
+        access_token: "at".to_string(),
         refresh_token: Some("rt".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "alice@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: orgs
             .iter()
             .map(|id| StoredOrganization {
@@ -1654,7 +1741,6 @@ fn device_creds(orgs: &[&str], active: &str) -> Credentials {
             })
             .collect(),
         active_organization_id: Some(active.to_string()),
-        api_key: None,
         updated_at: 100,
     }
 }
@@ -1780,8 +1866,8 @@ async fn test_org_switch_session_401s() {
     .await
     .unwrap();
 
-    let updated = store.load().unwrap().unwrap();
-    assert_eq!(updated.access_token.as_deref(), Some("fresh"));
+    let updated = loaded_session(&store);
+    assert_eq!(updated.access_token, "fresh");
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_2"));
 }
 
@@ -1819,7 +1905,7 @@ async fn test_status_telmoni_org_left_since_cached() {
     .unwrap_err();
 
     assert_eq!(err.to_string(), "you are no longer in org_2");
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert_eq!(updated.organizations.len(), 1, "the fresh list is kept");
 }
 
@@ -1852,7 +1938,7 @@ async fn test_active_organization_left_gives_way_to_the_default() {
             }}"#
         )
     };
-    let cached = || store.load().unwrap().unwrap();
+    let cached = || loaded_session(&store);
 
     // status under TELMONI_ORG reports on org_2, and leaves it inactive
     store.save(&stale).unwrap();
@@ -1976,7 +2062,7 @@ fn test_credentials_file_is_private() {
         0o600,
         "an older, looser file is replaced"
     );
-    assert_eq!(store.load().unwrap(), Some(creds));
+    assert_eq!(loaded_session(&store), creds);
 
     let leftovers: Vec<_> = std::fs::read_dir(store.path.parent().unwrap())
         .unwrap()
@@ -2145,24 +2231,23 @@ fn test_no_secret_in_an_address_a_log_line_shows() {
 //     the slug and names the one at /acme, and the id names either.
 #[tokio::test]
 async fn test_org_switch_takes_no_label() {
-    use telmoni_cli::auth::storage::{AuthType, Credentials, StoredOrganization, StoredPerson};
+    use telmoni_cli::auth::storage::{DeviceSession, StoredOrganization, StoredPerson};
     use telmoni_cli::commands::org;
 
     let store = temp_store();
     let transport = MockTransport::new();
 
-    let creds = Credentials {
-        auth_type: AuthType::Device,
+    let creds = DeviceSession {
         endpoint: "https://telmoni.com".to_string(),
-        access_token: Some("token_1".to_string()),
+        access_token: "token_1".to_string(),
         refresh_token: Some("rt_1".to_string()),
-        expires_at: Some(chrono::Utc::now().timestamp() + 3600),
-        session_row_id: Some("0192a3b4-1111-7000-8000-000000000001".to_string()),
-        person: Some(StoredPerson {
+        expires_at: unix_now() + 3600,
+        session_row_id: "0192a3b4-1111-7000-8000-000000000001".to_string(),
+        person: StoredPerson {
             user_id: "usr_1".to_string(),
             email: "bob@example.com".to_string(),
             display_name: None,
-        }),
+        },
         organizations: vec![
             StoredOrganization {
                 organization_id: "org_alpha".to_string(),
@@ -2178,7 +2263,6 @@ async fn test_org_switch_takes_no_label() {
             },
         ],
         active_organization_id: Some("org_alpha".to_string()),
-        api_key: None,
         updated_at: 100,
     };
     store.save(&creds).unwrap();
@@ -2207,7 +2291,8 @@ async fn test_org_switch_takes_no_label() {
                 { "organizationId": "org_alpha", "slug": "acme", "name": "Acme", "role": "owner" },
                 { "organizationId": "org_beta", "slug": "acme-2", "name": "Acme", "role": "member" }
             ],
-            "activeOrganizationId": "org_beta"
+            "activeOrganizationId": "org_beta",
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
 
@@ -2220,7 +2305,7 @@ async fn test_org_switch_takes_no_label() {
     )
     .await
     .unwrap();
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_beta"));
 
     transport.push_answer(
@@ -2231,7 +2316,8 @@ async fn test_org_switch_takes_no_label() {
                 { "organizationId": "org_alpha", "slug": "acme", "name": "Acme", "role": "owner" },
                 { "organizationId": "org_beta", "slug": "acme-2", "name": "Acme", "role": "member" }
             ],
-            "activeOrganizationId": "org_alpha"
+            "activeOrganizationId": "org_alpha",
+            "sessionRowId": "0192a3b4-1111-7000-8000-000000000001"
         }"#,
     );
     org::execute(
@@ -2243,7 +2329,7 @@ async fn test_org_switch_takes_no_label() {
     )
     .await
     .unwrap();
-    let updated = store.load().unwrap().unwrap();
+    let updated = loaded_session(&store);
     assert_eq!(updated.active_organization_id.as_deref(), Some("org_alpha"));
 }
 
@@ -2288,12 +2374,7 @@ async fn test_organization_named_by_slug() {
     .await
     .unwrap();
     assert_eq!(
-        store
-            .load()
-            .unwrap()
-            .unwrap()
-            .active_organization_id
-            .as_deref(),
+        loaded_session(&store).active_organization_id.as_deref(),
         Some("org_2")
     );
 
@@ -2311,12 +2392,7 @@ async fn test_organization_named_by_slug() {
     .await
     .unwrap();
     assert_eq!(
-        store
-            .load()
-            .unwrap()
-            .unwrap()
-            .active_organization_id
-            .as_deref(),
+        loaded_session(&store).active_organization_id.as_deref(),
         Some("org_2")
     );
 
@@ -2404,7 +2480,7 @@ async fn test_slug_moved_since_cached() {
             &store,
         )
     };
-    let cached = || store.load().unwrap().unwrap();
+    let cached = || loaded_session(&store);
 
     // 23a. status: the server acts in org_1, which the name no longer names
     store.save(&stale).unwrap();
@@ -2483,7 +2559,7 @@ fn test_debug_never_prints_a_secret() {
     use telmoni_cli::auth::{KeySource, SuppliedKey};
 
     let mut device = device_creds(&["org_1"], "org_1");
-    device.access_token = Some("secret_access".to_string());
+    device.access_token = "secret_access".to_string();
     device.refresh_token = Some("secret_refresh".to_string());
     let api_key = Credentials::for_api_key(
         "https://telmoni.com".to_string(),
@@ -2583,7 +2659,7 @@ async fn test_status_reads_a_401_by_its_type() {
     // 25c. and on the refresh an expiring bearer asks for first, which is
     //      asked for twice
     let mut expiring = device_creds(&["org_1"], "org_1");
-    expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    expiring.expires_at = unix_now() - 10;
     store.save(&expiring).unwrap();
     transport.push_answer(503, SERVER_UNAVAILABLE);
     transport.push_answer(503, SERVER_UNAVAILABLE);
@@ -2596,10 +2672,7 @@ async fn test_status_reads_a_401_by_its_type() {
     transport.push_answer(200, FRESH_TOKENS);
     transport.push_answer(200, ME_IN_ORG_1);
     status().await.unwrap();
-    assert_eq!(
-        store.load().unwrap().unwrap().access_token.as_deref(),
-        Some("fresh")
-    );
+    assert_eq!(loaded_session(&store).access_token, "fresh");
 
     // 25e. invalid-token on /cli/v1/me, and the refresh refused too: it has ended
     transport.push_answer(401, INVALID_TOKEN);
@@ -2801,17 +2874,14 @@ async fn test_network_failures_keep_credentials() {
 
     // 28b. the refresh an expiring bearer asks for, which is asked for twice
     let mut expiring = device_creds(&["org_1"], "org_1");
-    expiring.expires_at = Some(chrono::Utc::now().timestamp() - 10);
+    expiring.expires_at = unix_now() - 10;
     store.save(&expiring).unwrap();
     transport.push_error(no_answer());
     transport.push_error(no_answer());
     refresh_if_needed(&transport, &store, &mut expiring)
         .await
         .unwrap_err();
-    assert_eq!(
-        store.load().unwrap().unwrap().refresh_token.as_deref(),
-        Some("rt")
-    );
+    assert_eq!(loaded_session(&store).refresh_token.as_deref(), Some("rt"));
 
     // 28c. the refresh that would cure an expired bearer
     store.save(&device_creds(&["org_1"], "org_1")).unwrap();
@@ -2952,15 +3022,11 @@ async fn test_interactive_login() {
     assert_eq!(reqs[4].bearer.as_deref(), Some("at_new"));
     assert_eq!(reqs[4].organization, None);
 
-    let saved = store.load().unwrap().unwrap();
-    assert_eq!(saved.auth_type, AuthType::Device);
+    let saved = loaded_session(&store);
     assert_eq!(saved.endpoint, "https://telmoni.com");
-    assert_eq!(saved.access_token.as_deref(), Some("at_new"));
+    assert_eq!(saved.access_token, "at_new");
     assert_eq!(saved.refresh_token.as_deref(), Some("rt_new"));
-    assert_eq!(
-        saved.session_row_id.as_deref(),
-        Some("0192a3b4-1111-7000-8000-000000000001")
-    );
+    assert_eq!(saved.session_row_id, "0192a3b4-1111-7000-8000-000000000001");
     assert_eq!(saved.active_organization_id.as_deref(), Some("org_1"));
 }
 
@@ -3027,7 +3093,7 @@ async fn test_interactive_login_without_a_browser() {
 
 // 31. A login that does not end in a grant saves nothing: denied in the
 //     console, a 401 that is not about the device code (said as it is), or a
-//     request that got no answer, at the start or mid-poll
+//     device start that got no answer
 #[tokio::test]
 async fn test_interactive_login_that_fails_saves_nothing() {
     let store = temp_store();
@@ -3055,18 +3121,60 @@ async fn test_interactive_login_that_fails_saves_nothing() {
     let err = device_login(&transport, &store).await.unwrap_err();
     assert!(err.to_string().contains("Connection refused"), "{err}");
 
+    assert!(!store.path.exists());
+}
+
+// 31b. A poll that got no answer, or a 5xx, is asked again at twice the wait
+//      (RFC 8628 § 3.5), and the /me after the grant once more: a blip
+//      mid-sign-in costs nothing
+#[tokio::test]
+async fn test_a_dropped_poll_is_retried_slower() {
+    use telmoni_cli::commands::login;
+    use telmoni_cli::config::Config;
+
+    let store = temp_store();
+    let transport = MockTransport::new();
+    let slept = Arc::new(Mutex::new(Vec::<Duration>::new()));
+
     transport.push_answer(200, DEVICE_START);
     transport.push_answer(202, r#"{"status":"authorization_pending"}"#);
     transport.push_error(anyhow::anyhow!(
         "timed out waiting for https://telmoni.com/cli/v1/auth/device/poll"
     ));
-    let err = device_login(&transport, &store).await.unwrap_err();
-    assert!(
-        err.to_string().starts_with("timed out waiting for"),
-        "{err}"
-    );
+    transport.push_answer(503, SERVER_UNAVAILABLE);
+    transport.push_answer(200, GRANTED);
+    transport.push_error(anyhow::anyhow!(
+        "timed out waiting for https://telmoni.com/cli/v1/me"
+    ));
+    transport.push_answer(200, ME_IN_ORG_1);
 
-    assert!(!store.path.exists());
+    let recorded = slept.clone();
+    login::execute(
+        login::LoginArgs {
+            with_key: false,
+            endpoint: Some("https://telmoni.com".to_string()),
+            no_browser: true,
+        },
+        &transport,
+        &store,
+        &Config::default(),
+        None,
+        || Err(anyhow::anyhow!("a device login reads no key")),
+        |_: &str| Ok(()),
+        move |dur| {
+            recorded.lock().unwrap().push(dur);
+            async {}
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        *slept.lock().unwrap(),
+        [5, 5, 10, 20].map(Duration::from_secs)
+    );
+    assert_eq!(transport.requests.lock().unwrap().len(), 7);
+    assert_eq!(loaded_session(&store).access_token, "at_new");
 }
 
 // 32. The configuration file, at the path main hands down: a missing one is
@@ -3074,7 +3182,7 @@ async fn test_interactive_login_that_fails_saves_nothing() {
 //     file as it was, and a malformed one is an error main turns into a note
 #[test]
 fn test_configuration_file() {
-    use telmoni_cli::config::{get_config_value, load_config, set_config_value};
+    use telmoni_cli::config::{ConfigKey, get_config_value, load_config, set_config_value};
 
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("telmoni-config-{}-{}", std::process::id(), n));
@@ -3082,12 +3190,15 @@ fn test_configuration_file() {
     let path = dir.join("telmoni").join("config.json");
 
     assert_eq!(load_config(&path).unwrap().endpoint, None);
-    assert_eq!(get_config_value(&path, "endpoint", None).unwrap(), None);
-
-    set_config_value(&path, "endpoint", "https://config.example", None).unwrap();
-    set_config_value(&path, "output_format", "json", None).unwrap();
     assert_eq!(
-        get_config_value(&path, "endpoint", None)
+        get_config_value(&path, ConfigKey::Endpoint, None).unwrap(),
+        None
+    );
+
+    set_config_value(&path, ConfigKey::Endpoint, "https://config.example", None).unwrap();
+    set_config_value(&path, ConfigKey::OutputFormat, "json", None).unwrap();
+    assert_eq!(
+        get_config_value(&path, ConfigKey::Endpoint, None)
             .unwrap()
             .as_deref(),
         Some("https://config.example")
@@ -3096,16 +3207,35 @@ fn test_configuration_file() {
         load_config(&path).unwrap().output_format.as_deref(),
         Some("json")
     );
+    // Written whole, by a sibling renamed over it: none is left beside it.
+    let entries: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, ["config.json"]);
 
+    // api_key_helper takes a command, never the key it prints, and the
+    // refusal never quotes the value
     let before = std::fs::read_to_string(&path).unwrap();
-    let err = set_config_value(&path, "colour", "blue", None).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("unknown configuration key 'colour'"),
-        "{err}"
-    );
-    assert!(get_config_value(&path, "colour", None).is_err());
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    let key = "tm_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    for value in [
+        key.to_string(),
+        format!("echo {key}"),
+        format!("printf '%s' '{key}'"),
+    ] {
+        let err = set_config_value(&path, ConfigKey::ApiKeyHelper, &value, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("never the key"), "{err}");
+        assert!(!err.contains(key), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+    for command in [
+        "op read op://vault/telmoni/key",
+        "cat ~/.telmoni/tm_key.txt",
+    ] {
+        set_config_value(&path, ConfigKey::ApiKeyHelper, command, None).unwrap();
+    }
 
     std::fs::write(&path, "{ not json").unwrap();
     let err = load_config(&path).unwrap_err();
@@ -3250,7 +3380,7 @@ async fn test_status_with_a_supplied_key_marks_the_saved_login_it_passed_over() 
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0].url, "https://env.example/v1/organization");
     assert_eq!(reqs[0].bearer.as_deref(), Some("tm_supplied"));
-    assert_eq!(store.load().unwrap(), Some(saved));
+    assert_eq!(store.load().unwrap(), Some(Credentials::Device(saved)));
 
     let with_key = Credentials::for_api_key("https://telmoni.com".to_string(), "tm_saved".into());
     store.save(&with_key).unwrap();
@@ -3318,7 +3448,7 @@ fn test_the_variables_key_is_asked_about_once_at_a_terminal() {
 fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
     use telmoni_cli::auth::env_key_digest;
     use telmoni_cli::config::{
-        get_config_value, load_config, set_api_key_answer, set_config_value,
+        ConfigKey, get_config_value, load_config, set_api_key_answer, set_config_value,
     };
 
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -3328,18 +3458,18 @@ fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
     let key = Some(" tm_kept ");
 
     assert_eq!(
-        get_config_value(&path, "use_api_key_env", key).unwrap(),
+        get_config_value(&path, ConfigKey::UseApiKeyEnv, key).unwrap(),
         None
     );
-    set_config_value(&path, "use_api_key_env", "true", key).unwrap();
+    set_config_value(&path, ConfigKey::UseApiKeyEnv, "true", key).unwrap();
     assert_eq!(
-        get_config_value(&path, "use_api_key_env", Some("tm_kept"))
+        get_config_value(&path, ConfigKey::UseApiKeyEnv, Some("tm_kept"))
             .unwrap()
             .as_deref(),
         Some("true")
     );
     assert_eq!(
-        get_config_value(&path, "use_api_key_env", Some("tm_other")).unwrap(),
+        get_config_value(&path, ConfigKey::UseApiKeyEnv, Some("tm_other")).unwrap(),
         None
     );
     set_api_key_answer(&path, "tm_kept", false).unwrap();
@@ -3364,17 +3494,12 @@ fn test_use_api_key_env_answers_for_the_key_in_the_variable() {
         ),
         ("yes", key, "use_api_key_env is true or false"),
     ] {
-        let err = set_config_value(&path, "use_api_key_env", value, env_key)
+        let err = set_config_value(&path, ConfigKey::UseApiKeyEnv, value, env_key)
             .unwrap_err()
             .to_string();
         assert!(err.contains(refusal), "{err}");
         assert!(!err.contains("sk_live_wrong"), "{err}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
     }
-    let err = set_config_value(&path, "colour", "blue", None)
-        .unwrap_err()
-        .to_string();
-    assert!(err.ends_with("use_api_key_env"), "{err}");
-
     std::fs::remove_dir_all(&dir).unwrap();
 }

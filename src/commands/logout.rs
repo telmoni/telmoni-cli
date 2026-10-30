@@ -1,12 +1,12 @@
 //! `telmoni logout` command implementation.
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use clap::Args;
 
 use crate::auth::device::{
     SessionEnded, bearer_expired, fetch_me, refresh_session, refused_credentials, revoke_session,
 };
-use crate::auth::storage::{AuthType, Credentials, CredentialsStore};
+use crate::auth::storage::{Credentials, CredentialsStore, DeviceSession, unix_now};
 use crate::transport::{LaneError, Transport};
 
 /// Arguments for `telmoni logout`.
@@ -27,11 +27,11 @@ pub async fn execute(
     };
 
     // An API key has no session on the server to end.
-    if creds.auth_type == AuthType::Device {
-        validate_env_org(&creds, telmoni_org_env.as_deref())?;
-        if let Err(err) =
-            end_session(transport, store, &mut creds, telmoni_org_env.as_deref()).await
-        {
+    if let Credentials::Device(session) = &mut creds {
+        let named = session
+            .organization_from_env(telmoni_org_env.as_deref())?
+            .map(|org| org.organization_id.clone());
+        if let Err(err) = end_session(transport, store, session, named.as_deref()).await {
             eprintln!(
                 "note: the server did not confirm the sign-out ({err}); \
                  end the session from Active sessions in the console"
@@ -50,21 +50,18 @@ pub async fn execute(
 /// Ends the session on the server: `Ok` once the server confirmed it, or said
 /// it had already ended; the error is why that could not be confirmed. What
 /// it refreshes on the way it saves, as every refresh does: the file goes
-/// afterwards whatever the answer.
+/// afterwards whatever the answer. `named` is the id of the organization
+/// `TELMONI_ORG` names, when it names one.
 pub async fn end_session(
     transport: &impl Transport,
     store: &CredentialsStore,
-    creds: &mut Credentials,
-    env_org: Option<&str>,
+    creds: &mut DeviceSession,
+    named: Option<&str>,
 ) -> Result<()> {
-    let row_id = creds
-        .session_row_id
-        .clone()
-        .context("no session id was saved at sign-in")?;
-    let org_header = resolve_revoke_org_header(creds, env_org);
+    let row_id = creds.session_row_id.clone();
+    let org_header = resolve_revoke_org_header(creds, named);
 
-    let now_ts = chrono::Utc::now().timestamp();
-    let expiring = creds.expires_at.is_some_and(|exp| now_ts >= exp - 60);
+    let expiring = creds.expiring(unix_now());
     let mut refreshed = false;
     if expiring && creds.refresh_token.is_some() {
         match refresh_session(transport, store, creds).await {
@@ -105,30 +102,16 @@ pub async fn end_session(
     }
 }
 
-fn validate_env_org(creds: &Credentials, env_org: Option<&str>) -> Result<()> {
-    if let Some(target) = env_org
-        && creds.organization_named(target).is_none()
-    {
-        bail!(
-            "TELMONI_ORG names no organization in the cached list; run telmoni status \
-             without it to refresh the list"
-        );
-    }
-    Ok(())
-}
-
 /// The server requires the header of anyone in an organization, and `/me`
 /// names an active one whenever the list is non-empty, so the stored active
 /// organization is always the right value when the environment names none.
-fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Option<String> {
+fn resolve_revoke_org_header(creds: &DeviceSession, named: Option<&str>) -> Option<String> {
     if creds.organizations.is_empty() {
         return None;
     }
 
-    // The header takes the id, whichever of the two the environment gave.
-    env_org
-        .and_then(|target| creds.organization_named(target))
-        .map(|named| named.organization_id.clone())
+    named
+        .map(ToString::to_string)
         .or_else(|| creds.active_organization_id.clone())
         .or_else(|| {
             creds
@@ -140,14 +123,11 @@ fn resolve_revoke_org_header(creds: &Credentials, env_org: Option<&str>) -> Opti
 
 async fn revoke_with_org_fallback(
     transport: &impl Transport,
-    creds: &Credentials,
+    creds: &DeviceSession,
     row_id: &str,
     initial_org_header: Option<&str>,
 ) -> Result<()> {
-    let token = creds
-        .access_token
-        .as_deref()
-        .context("missing access token")?;
+    let token = &creds.access_token;
     let endpoint = &creds.endpoint;
     let mut ended = revoke_session(transport, endpoint, token, row_id, initial_org_header).await;
 

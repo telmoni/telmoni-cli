@@ -5,10 +5,13 @@ pub mod key;
 pub mod storage;
 
 pub use device::{
-    AuthnResult, DeviceStart, Me, Organization, Person, PollOutcome, fetch_me, poll_once,
-    poll_until_granted, refresh_if_needed, refresh_tokens, revoke_session, start_device_auth,
+    AuthnResult, DeviceStart, Me, NotSignedIn, Organization, Person, PollOutcome, SessionEnded,
+    fetch_me, poll_once, poll_until_granted, refresh_if_needed, refresh_tokens, revoke_session,
+    start_device_auth,
 };
 pub use key::{
     EnvKeyUse, KeySource, SuppliedKey, env_key_digest, env_key_use, run_helper, supplied_key,
 };
-pub use storage::{AuthType, Credentials, CredentialsStore, StoredOrganization, StoredPerson};
+pub use storage::{
+    Credentials, CredentialsStore, DeviceSession, SavedKey, StoredOrganization, StoredPerson,
+};

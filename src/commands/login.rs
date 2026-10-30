@@ -6,10 +6,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use clap::Args;
 
-use crate::auth::device::{fetch_me, poll_once, poll_until_granted, start_device_auth};
-use crate::auth::storage::{Credentials, CredentialsStore, print_active_organization};
+use crate::auth::device::{fetch_me, poll_once, poll_until_granted, start_device_auth, unanswered};
+use crate::auth::storage::{Credentials, CredentialsStore, DeviceSession};
+use crate::commands::org::print_active_organization;
 use crate::config::{Config, resolve_endpoint};
-use crate::transport::Transport;
+use crate::transport::{Transport, loggable_url};
 
 /// Arguments for `telmoni login`.
 #[derive(Debug, Args)]
@@ -107,7 +108,7 @@ fn login_with_api_key(key: &str, endpoint: String, store: &CredentialsStore) -> 
     store.save(&creds)?;
 
     println!("Signed in with API key");
-    println!("Endpoint: {endpoint}");
+    println!("Endpoint: {}", loggable_url(&endpoint));
     Ok(())
 }
 
@@ -144,7 +145,10 @@ where
                 eprintln!("note: could not open browser: {e}");
             }
         } else {
-            eprintln!("note: the verification page is not on {endpoint}; open it yourself");
+            eprintln!(
+                "note: the verification page is not on {}; open it yourself",
+                loggable_url(&endpoint)
+            );
         }
     }
 
@@ -162,15 +166,21 @@ where
     )
     .await?;
 
-    let me = fetch_me(transport, &endpoint, &authn.access_token, None).await?;
+    // The grant is spent: its `/me` is asked again rather than lost.
+    let me = match fetch_me(transport, &endpoint, &authn.access_token, None).await {
+        Err(err) if unanswered(&err) => {
+            fetch_me(transport, &endpoint, &authn.access_token, None).await?
+        }
+        answered => answered?,
+    };
     let email = me.person.email.clone();
     let raw_active_id = me.active_organization_id.clone();
 
-    let creds = Credentials::from_device_auth(endpoint, authn, me);
-    store.save(&creds)?;
+    let session = DeviceSession::from_device_auth(endpoint, authn, me);
+    store.save(&session)?;
 
     println!("Signed in as {email}");
-    print_active_organization(creds.active_organization(), raw_active_id.as_deref());
+    print_active_organization(session.active_organization(), raw_active_id.as_deref());
 
     Ok(())
 }

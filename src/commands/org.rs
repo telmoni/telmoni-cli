@@ -3,8 +3,8 @@
 use anyhow::{Result, anyhow, bail};
 use clap::Subcommand;
 
-use crate::auth::device::{fetch_me_for_session, refresh_if_needed};
-use crate::auth::storage::{AuthType, Credentials, CredentialsStore};
+use crate::auth::device::{NotSignedIn, fetch_me_for_session, refresh_if_needed};
+use crate::auth::storage::{Credentials, CredentialsStore, DeviceSession, StoredOrganization};
 use crate::transport::Transport;
 
 /// Subcommands for `telmoni org`.
@@ -26,32 +26,35 @@ pub async fn execute(
     transport: &impl Transport,
     store: &CredentialsStore,
 ) -> Result<()> {
-    let mut creds = require_device_session(store)?;
+    let Some(Credentials::Device(mut session)) = store.load()? else {
+        return Err(NotSignedIn("org commands need a browser session; run telmoni login").into());
+    };
 
     match cmd {
         OrgCommand::List => {
-            execute_list(&creds);
+            execute_list(&session);
             Ok(())
         }
         OrgCommand::Switch { organization } => {
-            execute_switch(&mut creds, &organization, transport, store).await
+            execute_switch(&mut session, &organization, transport, store).await
         }
     }
 }
 
-fn require_device_session(store: &CredentialsStore) -> Result<Credentials> {
-    let Some(creds) = store.load()? else {
-        bail!("org commands need a browser session; run telmoni login");
-    };
-
-    if creds.auth_type != AuthType::Device {
-        bail!("org commands need a browser session; run telmoni login");
+/// The "Active organization" line, as `login`, `status` and `org switch`
+/// print it: `<label> (<org_id>, <role>)` when cached, else the bare id,
+/// else "No organization".
+pub fn print_active_organization(org: Option<&StoredOrganization>, raw_id: Option<&str>) {
+    if let Some(org) = org {
+        println!("Active organization: {}", org.display_summary());
+    } else if let Some(id) = raw_id {
+        println!("Active organization: {id}");
+    } else {
+        println!("No organization");
     }
-
-    Ok(creds)
 }
 
-fn execute_list(creds: &Credentials) {
+fn execute_list(creds: &DeviceSession) {
     if creds.organizations.is_empty() {
         println!("No organizations");
         return;
@@ -71,7 +74,7 @@ fn execute_list(creds: &Credentials) {
 }
 
 async fn execute_switch(
-    creds: &mut Credentials,
+    creds: &mut DeviceSession,
     organization: &str,
     transport: &impl Transport,
     store: &CredentialsStore,
@@ -115,12 +118,10 @@ async fn execute_switch(
     if holds.is_ok() {
         creds.active_organization_id = Some(target_id.clone());
     }
-    store.save(creds)?;
+    store.save(&*creds)?;
     holds?;
 
-    if let Some(org) = creds.find_organization(&target_id) {
-        println!("Active organization: {}", org.display_summary());
-    }
+    print_active_organization(creds.find_organization(&target_id), Some(&target_id));
 
     Ok(())
 }

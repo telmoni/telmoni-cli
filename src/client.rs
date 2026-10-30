@@ -1,9 +1,9 @@
 //! Public `/v1` Telmoni API types and operations.
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::transport::{LaneRequest, Transport, parse_lane_error};
+use crate::transport::{LaneRequest, Transport, expect_json};
 
 /// Owner information returned by `/v1/organization`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,22 +46,13 @@ pub async fn fetch_v1_organization(
     endpoint: &str,
     api_key: &str,
 ) -> Result<V1Organization> {
-    let url = format!("{}/v1/organization", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
-        method: reqwest::Method::GET,
-        url,
         bearer: Some(api_key.to_string()),
-        organization: None,
-        json: None,
+        ..LaneRequest::to(reqwest::Method::GET, endpoint, "/v1/organization")
     };
-
-    let answer = transport.send(req).await?;
-    if answer.status == 200 {
-        let org: V1Organization =
-            serde_json::from_str(&answer.body).context("decoding /v1/organization response")?;
-        return Ok(org);
-    }
-
-    let lane_err = parse_lane_error(&answer);
-    bail!(lane_err)
+    expect_json(
+        &transport.send(req).await?,
+        200,
+        "the /v1/organization answer",
+    )
 }

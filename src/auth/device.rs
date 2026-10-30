@@ -7,8 +7,10 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::auth::storage::{Credentials, CredentialsStore};
-use crate::transport::{LaneAnswer, LaneError, LaneRequest, REDACTED, Transport, parse_lane_error};
+use crate::auth::storage::{CredentialsStore, DeviceSession, unix_now};
+use crate::transport::{
+    LaneAnswer, LaneError, LaneRequest, REDACTED, Transport, expect_json, parse_lane_error,
+};
 
 /// Response from `POST /cli/v1/auth/device`.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -174,8 +176,8 @@ pub struct Me {
     /// `None` exactly when `active_organization_id` is.
     #[serde(default)]
     pub default_organization_id: Option<String>,
-    /// Session row ID for Active Sessions tracking.
-    pub session_row_id: Option<String>,
+    /// Session row ID for Active Sessions tracking; never null on the platform.
+    pub session_row_id: String,
     /// True only on the answer that provisioned an organization for them: not
     /// on a first sign-in while sign-ups are closed, and true again once their
     /// last organization is gone and a fresh one is made.
@@ -197,35 +199,26 @@ pub enum PollOutcome {
         /// Retry-After duration in seconds, when provided.
         retry_after_secs: Option<u64>,
     },
+    /// No answer to read, or a 5xx: RFC 8628 § 3.5 asks for a slower retry.
+    Unanswered(String),
     /// Polling failed definitively with an error message to display.
     Failed(String),
 }
 
+/// The longest wait between polls while the platform does not answer.
+pub const MAX_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Initiates device authorization by calling `POST {endpoint}/cli/v1/auth/device`.
 pub async fn start_device_auth(transport: &impl Transport, endpoint: &str) -> Result<DeviceStart> {
-    let url = format!("{}/cli/v1/auth/device", endpoint.trim_end_matches('/'));
-    let req = LaneRequest {
-        method: reqwest::Method::POST,
-        url,
-        bearer: None,
-        organization: None,
-        json: None,
-    };
-
-    let answer = transport.send(req).await?;
-    if answer.status == 200 {
-        let start: DeviceStart =
-            serde_json::from_str(&answer.body).context("decoding device authorization response")?;
-        debug!(
-            expires_in = start.expires_in,
-            interval = start.interval,
-            "device code issued"
-        );
-        return Ok(start);
-    }
-
-    let lane_err = parse_lane_error(&answer);
-    bail!("{}", lane_err.message);
+    let req = LaneRequest::to(reqwest::Method::POST, endpoint, "/cli/v1/auth/device");
+    let start: DeviceStart =
+        expect_json(&transport.send(req).await?, 200, "the device authorization")?;
+    debug!(
+        expires_in = start.expires_in,
+        interval = start.interval,
+        "device code issued"
+    );
+    Ok(start)
 }
 
 /// Performs a single poll iteration against `POST {endpoint}/cli/v1/auth/device/poll`.
@@ -234,16 +227,15 @@ pub async fn poll_once(
     endpoint: &str,
     device_code: &str,
 ) -> Result<PollOutcome> {
-    let url = format!("{}/cli/v1/auth/device/poll", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
-        method: reqwest::Method::POST,
-        url,
-        bearer: None,
-        organization: None,
         json: Some(serde_json::json!({ "deviceCode": device_code })),
+        ..LaneRequest::to(reqwest::Method::POST, endpoint, "/cli/v1/auth/device/poll")
     };
-
-    let answer = transport.send(req).await?;
+    // A request that got no answer is an outcome, not the end.
+    let answer = match transport.send(req).await {
+        Ok(answer) => answer,
+        Err(err) => return Ok(PollOutcome::Unanswered(err.to_string())),
+    };
     parse_poll_answer(&answer)
 }
 
@@ -281,6 +273,7 @@ fn parse_poll_answer(answer: &LaneAnswer) -> Result<PollOutcome> {
                 retry_after_secs: lane_err.retry_after_secs,
             })
         }
+        500.. => Ok(PollOutcome::Unanswered(parse_lane_error(answer).message)),
         _ => {
             let lane_err = parse_lane_error(answer);
             Ok(PollOutcome::Failed(lane_err.message))
@@ -335,6 +328,10 @@ where
                 debug!(wait_secs = dur.as_secs(), "rate limited");
                 next_sleep = Some(dur);
             }
+            PollOutcome::Unanswered(why) => {
+                current_interval = current_interval.saturating_mul(2).min(MAX_POLL_INTERVAL);
+                debug!(%why, interval_secs = current_interval.as_secs(), "no answer");
+            }
             PollOutcome::Failed(msg) => bail!("{msg}"),
         }
     }
@@ -347,23 +344,12 @@ pub async fn fetch_me(
     access_token: &str,
     organization_id: Option<&str>,
 ) -> Result<Me> {
-    let url = format!("{}/cli/v1/me", endpoint.trim_end_matches('/'));
     let req = LaneRequest {
-        method: reqwest::Method::POST,
-        url,
         bearer: Some(access_token.to_string()),
         organization: organization_id.map(ToString::to_string),
-        json: None,
+        ..LaneRequest::to(reqwest::Method::POST, endpoint, "/cli/v1/me")
     };
-
-    let answer = transport.send(req).await?;
-    if answer.status == 200 {
-        let me: Me = serde_json::from_str(&answer.body).context("decoding /cli/v1/me response")?;
-        return Ok(me);
-    }
-
-    let lane_err = parse_lane_error(&answer);
-    bail!(lane_err)
+    expect_json(&transport.send(req).await?, 200, "the /cli/v1/me answer")
 }
 
 /// Refreshes session tokens via `POST {endpoint}/cli/v1/auth/refresh`.
@@ -371,38 +357,20 @@ pub async fn refresh_tokens(
     transport: &impl Transport,
     endpoint: &str,
     refresh_token: &str,
-    session_row_id: Option<&str>,
+    session_row_id: &str,
 ) -> Result<AuthnResult> {
-    let url = format!("{}/cli/v1/auth/refresh", endpoint.trim_end_matches('/'));
-    let mut body_map = serde_json::Map::new();
-    body_map.insert(
-        "refreshToken".to_string(),
-        serde_json::Value::String(refresh_token.to_string()),
-    );
-    if let Some(row_id) = session_row_id {
-        body_map.insert(
-            "sessionRowId".to_string(),
-            serde_json::Value::String(row_id.to_string()),
-        );
-    }
-
     let req = LaneRequest {
-        method: reqwest::Method::POST,
-        url,
-        bearer: None,
-        organization: None,
-        json: Some(serde_json::Value::Object(body_map)),
+        json: Some(serde_json::json!({
+            "refreshToken": refresh_token,
+            "sessionRowId": session_row_id,
+        })),
+        ..LaneRequest::to(reqwest::Method::POST, endpoint, "/cli/v1/auth/refresh")
     };
-
-    let answer = transport.send(req).await?;
-    if answer.status == 200 {
-        let authn: AuthnResult = serde_json::from_str(&answer.body)
-            .context("decoding refresh response from /cli/v1/auth/refresh")?;
-        return Ok(authn);
-    }
-
-    let lane_err = parse_lane_error(&answer);
-    bail!(lane_err)
+    expect_json(
+        &transport.send(req).await?,
+        200,
+        "the /cli/v1/auth/refresh answer",
+    )
 }
 
 /// A bearer that expired. The platform keeps its row a while.
@@ -417,6 +385,10 @@ const INVALID_TOKEN: &str = "/errors/auth/invalid-token";
 /// A revoked session, or an account being deleted.
 const UNAUTHENTICATED: &str = "/errors/auth/unauthenticated";
 
+/// Auth's own 404: what it names is gone. The server's `/errors/not-found`,
+/// for a path no lane matches, is not this.
+const NOT_FOUND: &str = "/errors/auth/not-found";
+
 /// The session is over: the platform said so, or nothing is left to renew it
 /// with. The credentials file is gone by the time this is returned.
 #[derive(Debug)]
@@ -429,6 +401,18 @@ impl std::fmt::Display for SessionEnded {
 }
 
 impl std::error::Error for SessionEnded {}
+
+/// No login this command can act with; the message says which to make.
+#[derive(Debug)]
+pub struct NotSignedIn(pub &'static str);
+
+impl std::fmt::Display for NotSignedIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for NotSignedIn {}
 
 /// The problem type of a 401 that speaks about the caller's own credentials.
 /// ⚠ Any other 401 ends nothing: it is not auth judging this session (the
@@ -453,25 +437,17 @@ pub(crate) fn bearer_expired(err: &anyhow::Error) -> bool {
     )
 }
 
-/// Refreshes access tokens if expired or expiring within 60 seconds.
+/// Refreshes the access token when it is expiring (`DeviceSession::expiring`).
 pub async fn refresh_if_needed(
     transport: &impl Transport,
     store: &CredentialsStore,
-    creds: &mut Credentials,
+    session: &mut DeviceSession,
 ) -> Result<()> {
-    if creds.auth_type != crate::auth::storage::AuthType::Device {
+    if !session.expiring(unix_now()) {
         return Ok(());
     }
-
-    let now_ts = chrono::Utc::now().timestamp();
-    if let Some(exp) = creds.expires_at
-        && now_ts < exp - 60
-    {
-        return Ok(());
-    }
-
-    debug!("refreshing: the access token expires within 60 seconds, or its expiry is unknown");
-    refresh_session(transport, store, creds).await
+    debug!("refreshing: the access token is expiring");
+    refresh_session(transport, store, session).await
 }
 
 /// Refreshes the session's tokens and saves them: the platform rotates the
@@ -479,14 +455,14 @@ pub async fn refresh_if_needed(
 pub(crate) async fn refresh_session(
     transport: &impl Transport,
     store: &CredentialsStore,
-    creds: &mut Credentials,
+    session: &mut DeviceSession,
 ) -> Result<()> {
-    let Some(rt) = creds.refresh_token.clone() else {
+    let Some(rt) = session.refresh_token.clone() else {
         debug!("no refresh token held");
         return Err(session_ended(store));
     };
-    let row_id = creds.session_row_id.as_deref();
-    let mut answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
+    let row_id = session.session_row_id.clone();
+    let mut answer = refresh_tokens(transport, &session.endpoint, &rt, &row_id).await;
     // ⚠ The platform may have spent the token without its answer arriving:
     // the server may answer a 503 of its own while its database is out of
     // reach, or the connection may drop after the token was spent. A spent
@@ -495,16 +471,16 @@ pub(crate) async fn refresh_session(
     // session. So the refresh is asked for again at once.
     if answer.as_ref().is_err_and(unanswered) {
         debug!("the refresh got no answer to read; asking again within the platform's grace");
-        answer = refresh_tokens(transport, &creds.endpoint, &rt, row_id).await;
+        answer = refresh_tokens(transport, &session.endpoint, &rt, &row_id).await;
     }
     let authn = answer.map_err(|err| ended_or_surfaced(store, err))?;
-    creds.apply_refresh(&authn);
-    store.save(creds)
+    session.apply_refresh(&authn);
+    store.save(&*session)
 }
 
 /// A request the platform may have acted on without the CLI reading its
 /// answer: a 5xx, or no answer it could read.
-fn unanswered(err: &anyhow::Error) -> bool {
+pub(crate) fn unanswered(err: &anyhow::Error) -> bool {
     err.downcast_ref::<LaneError>()
         .is_none_or(|lane_err| lane_err.status >= 500)
 }
@@ -518,11 +494,17 @@ fn unanswered(err: &anyhow::Error) -> bool {
 pub async fn fetch_me_for_session(
     transport: &impl Transport,
     store: &CredentialsStore,
-    creds: &mut Credentials,
+    session: &mut DeviceSession,
     organization_id: Option<&str>,
 ) -> Result<Me> {
-    let access_token = creds.access_token.clone().context("missing access token")?;
-    let err = match fetch_me(transport, &creds.endpoint, &access_token, organization_id).await {
+    let err = match fetch_me(
+        transport,
+        &session.endpoint,
+        &session.access_token,
+        organization_id,
+    )
+    .await
+    {
         Ok(me) => return Ok(me),
         Err(err) => err,
     };
@@ -534,11 +516,15 @@ pub async fn fetch_me_for_session(
         problem_type = refused_credentials(&err),
         "the bearer was refused; refreshing once"
     );
-    refresh_session(transport, store, creds).await?;
-    let fresh = creds.access_token.clone().context("missing access token")?;
-    fetch_me(transport, &creds.endpoint, &fresh, organization_id)
-        .await
-        .map_err(|err| ended_or_surfaced(store, err))
+    refresh_session(transport, store, session).await?;
+    fetch_me(
+        transport,
+        &session.endpoint,
+        &session.access_token,
+        organization_id,
+    )
+    .await
+    .map_err(|err| ended_or_surfaced(store, err))
 }
 
 /// A refusal that speaks about the caller's credentials ends the session, and
@@ -570,29 +556,24 @@ pub async fn revoke_session(
     session_row_id: &str,
     organization_id: Option<&str>,
 ) -> Result<()> {
-    let url = format!(
-        "{}/cli/v1/sessions/{}/revoke",
-        endpoint.trim_end_matches('/'),
-        session_row_id
-    );
     let req = LaneRequest {
-        method: reqwest::Method::POST,
-        url,
         bearer: Some(access_token.to_string()),
         organization: organization_id.map(ToString::to_string),
-        json: None,
+        ..LaneRequest::to(
+            reqwest::Method::POST,
+            endpoint,
+            &format!("/cli/v1/sessions/{session_row_id}/revoke"),
+        )
     };
 
     let answer = transport.send(req).await?;
     if answer.status == 204 {
         return Ok(());
     }
-
-    // ⚠ A 404 is "already gone" only as auth types it. The server's own 404,
-    // `/errors/not-found`, for a path no lane matches, leaves the session as
-    // live as it was.
+    // ⚠ A 404 is "already gone" only as auth types it: the server's own
+    // leaves the session as live as it was.
     let lane_err = parse_lane_error(&answer);
-    if answer.status == 404 && lane_err.problem_type.as_deref() == Some("/errors/auth/not-found") {
+    if answer.status == 404 && lane_err.problem_type.as_deref() == Some(NOT_FOUND) {
         return Ok(());
     }
     bail!(lane_err)

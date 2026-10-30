@@ -12,9 +12,11 @@ use anyhow::{Result, bail};
 
 use crate::commands::login::validate_api_key;
 
-/// Where a supplied key came from, which `status` names.
+/// Where the key a command acts with came from, which `status` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySource {
+    /// The saved login, from `login --with-key`.
+    Saved,
     /// `TELMONI_API_KEY`.
     Environment,
     /// The configuration file's `api_key_helper`.
@@ -26,6 +28,7 @@ impl KeySource {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Saved => "the saved login",
             Self::Environment => "TELMONI_API_KEY",
             Self::Helper => "api_key_helper",
         }
@@ -35,13 +38,14 @@ impl KeySource {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Saved => "saved",
             Self::Environment => "environment",
             Self::Helper => "helper",
         }
     }
 }
 
-/// An API key for this command alone.
+/// An API key for this command alone: its source is never `Saved`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SuppliedKey {
     /// The key.

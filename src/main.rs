@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, fmt};
 
-use telmoni_cli::auth::{CredentialsStore, EnvKeyUse, env_key_use, run_helper, supplied_key};
+use telmoni_cli::auth::{
+    CredentialsStore, EnvKeyUse, NotSignedIn, SessionEnded, env_key_use, run_helper, supplied_key,
+};
 use telmoni_cli::commands::{config_cmd, login, logout, org, status};
 use telmoni_cli::config::{Config, load_config, resolve_endpoint, set_api_key_answer};
 use telmoni_cli::transport::ReqwestTransport;
@@ -186,7 +188,13 @@ async fn main() {
 
     if let Err(e) = res {
         eprintln!("{e}");
-        std::process::exit(1);
+        // No usable login: a script signs in again rather than retrying.
+        let code = if e.is::<SessionEnded>() || e.is::<NotSignedIn>() {
+            4
+        } else {
+            1
+        };
+        std::process::exit(code);
     }
 }
 

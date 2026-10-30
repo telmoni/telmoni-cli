@@ -129,19 +129,22 @@ fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// The transport's refusal of plain HTTP to another host, before any socket.
+const CLEARTEXT_REFUSED: &str = "refusing to send credentials over unencrypted HTTP";
+
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 // Signed out, status prints the endpoint it would sign in against on stdout
-// and the refusal on stderr, and exits 1; with --json stdout stays empty.
+// and the refusal on stderr, and exits 4; with --json stdout stays empty.
 // TELMONI_ENDPOINT is read, and a blank one is no value.
 #[test]
 fn signed_out_status_names_the_endpoint() {
     let sandbox = Sandbox::new();
 
     let out = sandbox.run(&["status"], &[]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
     assert!(stderr(&out).contains("Not signed in"), "{}", stderr(&out));
 
@@ -152,7 +155,7 @@ fn signed_out_status_names_the_endpoint() {
     assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
 
     let out = sandbox.run(&["whoami", "--json"], &[]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert_eq!(stdout(&out), "");
 }
 
@@ -188,13 +191,24 @@ fn configuration_file_through_the_binary() {
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "https://env.example")]);
     assert_eq!(stdout(&out), "Endpoint: https://env.example\n");
 
+    // An unknown key is a usage error, as a mistyped flag is, naming the keys.
     let out = sandbox.run(&["config", "get", "colour"], &[]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     assert!(
-        stderr(&out).contains("unknown configuration key 'colour'"),
+        stderr(&out).contains("invalid value 'colour'") && stderr(&out).contains("use_api_key_env"),
         "{}",
         stderr(&out)
     );
+
+    // api_key_helper refuses the key itself, without echoing it.
+    let key = "tm_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+    let out = sandbox.run(
+        &["config", "set", "api_key_helper", &format!("echo {key}")],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("never the key"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains(key) && !stdout(&out).contains(key));
 
     std::fs::write(&path, "{ not json").unwrap();
     let out = sandbox.run(&["status"], &[]);
@@ -237,8 +251,9 @@ fn dotenv_only_in_a_debug_build() {
 #[test]
 fn api_key_sign_in_and_out() {
     let sandbox = Sandbox::new();
-    // Were a request made after all, this endpoint refuses it on this machine.
-    let env = [("TELMONI_ENDPOINT", "http://127.0.0.1:9")];
+    // Were a request made after all, plain HTTP to another host is refused
+    // before any socket.
+    let env = [("TELMONI_ENDPOINT", "http://telmoni.invalid")];
     let creds = sandbox.telmoni_dir().join("credentials.json");
     let mut outputs = Vec::new();
 
@@ -260,7 +275,7 @@ fn api_key_sign_in_and_out() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "Signed in with API key\nEndpoint: http://127.0.0.1:9\n"
+        "Signed in with API key\nEndpoint: http://telmoni.invalid\n"
     );
     assert!(stderr(&out).contains("DEBUG"), "{}", stderr(&out));
     assert!(saved(&creds));
@@ -273,7 +288,7 @@ fn api_key_sign_in_and_out() {
     outputs.push(out);
 
     let out = sandbox.run(&["-v", "org", "list"], &env);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert!(
         stderr(&out).contains("org commands need a browser session"),
         "{}",
@@ -302,10 +317,10 @@ fn api_key_sign_in_and_out() {
 fn a_key_for_one_command() {
     let sandbox = Sandbox::new();
     let creds = sandbox.telmoni_dir().join("credentials.json");
-    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+    let endpoint = ("TELMONI_ENDPOINT", "http://telmoni.invalid");
 
     let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_API_KEY", "  ")]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert!(
         stderr(&out).contains("Not signed in. Run telmoni login, or set TELMONI_API_KEY."),
         "{}",
@@ -324,11 +339,11 @@ fn a_key_for_one_command() {
     );
     assert!(!stderr(&out).contains("sk_live_wrong"), "{}", stderr(&out));
 
-    // A key in the variable is used at once: the refused connection, not
-    // "Not signed in", is what stops it.
+    // A key in the variable is used at once: the transport's refusal of plain
+    // HTTP, not "Not signed in", is what stops it.
     let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_API_KEY", "tm_from_env")]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+    assert!(stderr(&out).contains(CLEARTEXT_REFUSED), "{}", stderr(&out));
     assert!(!stderr(&out).contains("tm_from_env"), "{}", stderr(&out));
 
     // The saved login the key passes over is read in silence: a copy that
@@ -339,7 +354,7 @@ fn a_key_for_one_command() {
     assert_eq!(out.status.code(), Some(1));
     assert!(!stderr(&out).contains("note:"), "{}", stderr(&out));
     let out = sandbox.run(&["status"], &[endpoint]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert!(
         stderr(&out).contains("note: the saved credentials cannot be read"),
         "{}",
@@ -376,7 +391,7 @@ fn a_key_for_one_command() {
 fn a_key_is_used_unasked_where_nobody_can_answer() {
     let sandbox = Sandbox::new();
     let path = sandbox.telmoni_dir().join("config.json");
-    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+    let endpoint = ("TELMONI_ENDPOINT", "http://telmoni.invalid");
     let key = ("TELMONI_API_KEY", "tm_from_env");
 
     let out = sandbox.run(&["config", "set", "use_api_key_env", "false"], &[]);
@@ -414,8 +429,8 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
     for args in [&["status"][..], &["status", "--json"][..]] {
         let out = sandbox.run(args, &[endpoint, key]);
         assert_eq!(out.status.code(), Some(1));
-        // The refused connection, not "Not signed in", is what stops it.
-        assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+        // The transport's refusal, not "Not signed in", is what stops it.
+        assert!(stderr(&out).contains(CLEARTEXT_REFUSED), "{}", stderr(&out));
         assert!(!stderr(&out).contains("Use it ahead"), "{}", stderr(&out));
         assert!(!stderr(&out).contains("tm_from_env"), "{}", stderr(&out));
     }
@@ -435,7 +450,7 @@ fn a_key_is_used_unasked_where_nobody_can_answer() {
 #[test]
 fn a_login_per_configuration_directory() {
     let sandbox = Sandbox::new();
-    let endpoint = ("TELMONI_ENDPOINT", "http://127.0.0.1:9");
+    let endpoint = ("TELMONI_ENDPOINT", "http://telmoni.invalid");
     let default = sandbox.telmoni_dir().join("credentials.json");
     let a = sandbox.root.join("a");
     let b = sandbox.root.join("b");
@@ -459,7 +474,7 @@ fn a_login_per_configuration_directory() {
 
     // The directory's own configuration file names the endpoint.
     let out = sandbox.run(
-        &["config", "set", "endpoint", "http://127.0.0.1:9"],
+        &["config", "set", "endpoint", "http://telmoni.invalid"],
         &[in_a],
     );
     assert!(out.status.success(), "{}", stderr(&out));
@@ -470,7 +485,7 @@ fn a_login_per_configuration_directory() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "Signed in with API key\nEndpoint: http://127.0.0.1:9\n"
+        "Signed in with API key\nEndpoint: http://telmoni.invalid\n"
     );
     let out = sandbox.run_with_input(&["login", "--with-key"], &[endpoint, in_b], "tm_key_b\n");
     assert!(out.status.success(), "{}", stderr(&out));
@@ -482,10 +497,10 @@ fn a_login_per_configuration_directory() {
     for env in [&[in_a][..], &[endpoint, in_b][..]] {
         let out = sandbox.run(&["status"], env);
         assert_eq!(out.status.code(), Some(1));
-        assert!(!stderr(&out).contains("Not signed in"), "{}", stderr(&out));
+        assert!(stderr(&out).contains(CLEARTEXT_REFUSED), "{}", stderr(&out));
     }
     let out = sandbox.run(&["status"], &[endpoint, ("TELMONI_CONFIG_DIR", "  ")]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(4));
     assert!(stderr(&out).contains("Not signed in"), "{}", stderr(&out));
 
     // The value is trimmed.

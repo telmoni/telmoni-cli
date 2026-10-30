@@ -1,15 +1,16 @@
 //! `telmoni status` and `telmoni whoami` commands.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use clap::Args;
 use serde_json::json;
 
-use crate::auth::device::{fetch_me_for_session, refresh_if_needed};
-use crate::auth::key::SuppliedKey;
-use crate::auth::storage::{AuthType, Credentials, CredentialsStore, print_active_organization};
+use crate::auth::device::{NotSignedIn, fetch_me_for_session, refresh_if_needed};
+use crate::auth::key::{KeySource, SuppliedKey};
+use crate::auth::storage::{Credentials, CredentialsStore, DeviceSession, unix_now};
 use crate::client::fetch_v1_organization;
+use crate::commands::org::print_active_organization;
 use crate::config::Config;
-use crate::transport::Transport;
+use crate::transport::{Transport, loggable_url};
 
 /// Arguments for `telmoni status` and `telmoni whoami`.
 #[derive(Debug, Args)]
@@ -34,21 +35,27 @@ pub async fn execute(
         // nothing, and the refusal on stderr.
         if !args.json {
             let endpoint = crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config);
-            println!("Endpoint: {endpoint}");
+            println!("Endpoint: {}", loggable_url(&endpoint));
         }
-        bail!("Not signed in. Run telmoni login, or set TELMONI_API_KEY.");
+        return Err(
+            NotSignedIn("Not signed in. Run telmoni login, or set TELMONI_API_KEY.").into(),
+        );
     };
 
-    match creds.auth_type {
-        AuthType::ApiKey => {
-            let api_key = creds
-                .api_key
-                .as_deref()
-                .context("missing api key in credentials")?;
-            report_api_key(args, transport, &creds.endpoint, api_key, None, None).await
+    match &mut creds {
+        Credentials::ApiKey(saved) => {
+            report_api_key(
+                args,
+                transport,
+                &saved.endpoint,
+                &saved.api_key,
+                KeySource::Saved,
+                None,
+            )
+            .await
         }
-        AuthType::Device => {
-            execute_device(args, transport, store, &mut creds, telmoni_org_env).await
+        Credentials::Device(session) => {
+            execute_device(args, transport, store, session, telmoni_org_env).await
         }
     }
 }
@@ -66,12 +73,11 @@ pub enum UnusedLogin {
 impl UnusedLogin {
     /// What `saved` is, if anything was saved.
     pub fn of(saved: Option<&Credentials>) -> Option<Self> {
-        let creds = saved?;
-        match creds.auth_type {
-            AuthType::Device => creds.person.as_ref().map(|person| Self::Device {
-                email: person.email.clone(),
+        match saved? {
+            Credentials::Device(session) => Some(Self::Device {
+                email: session.person.email.clone(),
             }),
-            AuthType::ApiKey => Some(Self::ApiKey),
+            Credentials::ApiKey(_) => Some(Self::ApiKey),
         }
     }
 
@@ -105,18 +111,17 @@ pub async fn execute_with_key(
     endpoint: &str,
     unused: Option<UnusedLogin>,
 ) -> Result<()> {
-    report_api_key(args, transport, endpoint, &key.key, Some(key), unused).await
+    report_api_key(args, transport, endpoint, &key.key, key.source, unused).await
 }
 
-/// What an API key opens, asked of `/v1`; `supplied` is the key's origin
-/// when it is not the saved login's, and `unused` the saved login it
-/// passed over.
+/// What an API key opens, asked of `/v1`; `source` is where the key came
+/// from, and `unused` the saved login a supplied key passed over.
 async fn report_api_key(
     args: StatusArgs,
     transport: &impl Transport,
     endpoint: &str,
     api_key: &str,
-    supplied: Option<&SuppliedKey>,
+    source: KeySource,
     unused: Option<UnusedLogin>,
 ) -> Result<()> {
     let org = fetch_v1_organization(transport, endpoint, api_key).await?;
@@ -124,8 +129,8 @@ async fn report_api_key(
     if args.json {
         let mut out = json!({
             "authType": "api_key",
-            "keySource": supplied.map_or("saved", |k| k.source.as_str()),
-            "endpoint": endpoint,
+            "keySource": source.as_str(),
+            "endpoint": loggable_url(endpoint),
             "organization": {
                 "organizationId": org.organization_id,
                 "slug": org.slug,
@@ -137,16 +142,16 @@ async fn report_api_key(
         }
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        match supplied {
-            Some(key) => println!(
+        match source {
+            KeySource::Saved => println!("API key for {} ({})", org.organization_id, org.label()),
+            KeySource::Environment | KeySource::Helper => println!(
                 "API key from {} for {} ({})",
-                key.source.name(),
+                source.name(),
                 org.organization_id,
                 org.label()
             ),
-            None => println!("API key for {} ({})", org.organization_id, org.label()),
         }
-        println!("Endpoint: {endpoint}");
+        println!("Endpoint: {}", loggable_url(endpoint));
         if let Some(unused) = &unused {
             println!("{}", unused.line());
         }
@@ -158,19 +163,23 @@ async fn execute_device(
     args: StatusArgs,
     transport: &impl Transport,
     store: &CredentialsStore,
-    creds: &mut Credentials,
+    session: &mut DeviceSession,
     telmoni_org_env: Option<String>,
 ) -> Result<()> {
-    let active_org_id = resolve_device_active_org(creds, telmoni_org_env.as_deref())?;
+    // The cache, not the truth: a slug the organization took since, by a URL
+    // change, is unknown here until `/cli/v1/me` is read again.
+    let active_org_id = session
+        .organization_from_env(telmoni_org_env.as_deref())?
+        .map(|named| named.organization_id.clone())
+        .or_else(|| session.active_organization_id.clone());
 
-    // Refresh first if access token is within 60 seconds of expiry
-    refresh_if_needed(transport, store, creds).await?;
+    refresh_if_needed(transport, store, session).await?;
 
-    let me = fetch_me_for_session(transport, store, creds, active_org_id.as_deref()).await?;
-    creds.update_from_me(&me, telmoni_org_env.is_some());
+    let me = fetch_me_for_session(transport, store, session, active_org_id.as_deref()).await?;
+    session.update_from_me(&me, telmoni_org_env.is_some());
     // Only the cached list is at stake: the tokens a refresh rotated were
     // saved by the refresh itself, or it failed.
-    if let Err(err) = store.save(creds) {
+    if let Err(err) = store.save(&*session) {
         eprintln!(
             "note: the organization list could not be saved ({err}); the next command fetches it again"
         );
@@ -191,7 +200,7 @@ async fn execute_device(
     // give the organization the same name; else this would report on one
     // the console no longer shows at that URL.
     if let Some(env_org) = telmoni_org_env.as_deref() {
-        let named_now = creds.organization_named(env_org);
+        let named_now = session.organization_named(env_org);
         if named_now.map(|o| &o.organization_id) != active_org_id.as_ref() {
             bail!("{env_org} no longer names the organization it did; run telmoni org list");
         }
@@ -200,48 +209,26 @@ async fn execute_device(
     let effective_active_id = if telmoni_org_env.is_some() {
         active_org_id.as_deref()
     } else {
-        creds.active_organization_id.as_deref()
+        session.active_organization_id.as_deref()
     };
 
-    let remaining_secs = creds.expires_at.unwrap_or(0) - chrono::Utc::now().timestamp();
-    let token_expires_in_secs = remaining_secs.max(0);
+    let token_expires_in_secs = (session.expires_at - unix_now()).max(0);
 
     if args.json {
-        print_device_json(creds, effective_active_id, token_expires_in_secs)?;
+        print_device_json(session, effective_active_id, token_expires_in_secs)?;
     } else {
-        print_device_text(creds, effective_active_id, token_expires_in_secs)?;
+        print_device_text(session, effective_active_id, token_expires_in_secs);
     }
     Ok(())
 }
 
-/// The id of the organization to act in: the one the environment names, by
-/// id or slug, else the stored active one.
-fn resolve_device_active_org(
-    creds: &Credentials,
-    telmoni_org_env: Option<&str>,
-) -> Result<Option<String>> {
-    if let Some(env_org) = telmoni_org_env {
-        // The cache, not the truth: a slug the organization took since, by a
-        // URL change, is unknown here until `/cli/v1/me` is read again.
-        let Some(named) = creds.organization_named(env_org) else {
-            bail!(
-                "TELMONI_ORG names no organization in the cached list; run telmoni status \
-                 without it to refresh the list"
-            );
-        };
-        Ok(Some(named.organization_id.clone()))
-    } else {
-        Ok(creds.active_organization_id.clone())
-    }
-}
-
 fn print_device_json(
-    creds: &Credentials,
+    session: &DeviceSession,
     effective_active_id: Option<&str>,
     token_expires_in_secs: i64,
 ) -> Result<()> {
     let active_org = effective_active_id
-        .and_then(|id| creds.find_organization(id))
+        .and_then(|id| session.find_organization(id))
         .map(|o| {
             json!({
                 "organizationId": o.organization_id,
@@ -251,18 +238,16 @@ fn print_device_json(
             })
         });
 
-    let person_json = json!({
-        "userId": creds.person.as_ref().map(|p| &p.user_id),
-        "email": creds.person.as_ref().map(|p| &p.email),
-        "displayName": creds.person.as_ref().and_then(|p| p.display_name.as_ref()),
-    });
-
     let out = json!({
         "authType": "device",
-        "endpoint": creds.endpoint,
-        "person": person_json,
+        "endpoint": loggable_url(&session.endpoint),
+        "person": {
+            "userId": session.person.user_id,
+            "email": session.person.email,
+            "displayName": session.person.display_name,
+        },
         "activeOrganization": active_org,
-        "organizationCount": creds.organizations.len(),
+        "organizationCount": session.organizations.len(),
         "tokenExpiresInSecs": token_expires_in_secs,
     });
     println!("{}", serde_json::to_string_pretty(&out)?);
@@ -270,27 +255,22 @@ fn print_device_json(
 }
 
 fn print_device_text(
-    creds: &Credentials,
+    session: &DeviceSession,
     effective_active_id: Option<&str>,
     token_expires_in_secs: i64,
-) -> Result<()> {
-    let person = creds
-        .person
-        .as_ref()
-        .context("missing person in credentials")?;
-
+) {
+    let person = &session.person;
     if let Some(ref name) = person.display_name {
         println!("Signed in as {} ({})", person.email, name);
     } else {
         println!("Signed in as {}", person.email);
     }
 
-    let active_org = effective_active_id.and_then(|id| creds.find_organization(id));
+    let active_org = effective_active_id.and_then(|id| session.find_organization(id));
     print_active_organization(active_org, effective_active_id);
 
-    println!("Organizations: {}", creds.organizations.len());
-    println!("Endpoint: {}", creds.endpoint);
+    println!("Organizations: {}", session.organizations.len());
+    println!("Endpoint: {}", loggable_url(&session.endpoint));
     let minutes = token_expires_in_secs / 60;
     println!("Token: expires in {minutes} minutes");
-    Ok(())
 }

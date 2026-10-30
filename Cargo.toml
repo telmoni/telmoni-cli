@@ -50,19 +50,17 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "wrap_help", "env"] }
 serde_json = "1"
 tracing = "0.1"
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "io-util", "process", "fs"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "process"] }
 serde = { version = "1", features = ["derive"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "7"
 open = "5"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 # SHA-256 alone; rustls builds it already.
 ring = { version = "0.17", default-features = false }
 
 [dependencies]
 anyhow = { workspace = true }
-chrono = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
 open = { workspace = true }

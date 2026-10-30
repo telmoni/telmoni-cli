@@ -34,6 +34,19 @@ pub struct LaneRequest {
     pub json: Option<serde_json::Value>,
 }
 
+impl LaneRequest {
+    /// `method` on `path` under `endpoint`, with nothing else set.
+    pub fn to(method: reqwest::Method, endpoint: &str, path: &str) -> Self {
+        Self {
+            method,
+            url: format!("{}{path}", endpoint.trim_end_matches('/')),
+            bearer: None,
+            organization: None,
+            json: None,
+        }
+    }
+}
+
 /// ⚠ By hand: the bearer is the access token or the API key, and a body
 /// carries the refresh token or the device code.
 impl std::fmt::Debug for LaneRequest {
@@ -137,6 +150,19 @@ pub fn parse_lane_error(answer: &LaneAnswer) -> LaneError {
     parse_fallback_body(&answer.body, answer.status)
 }
 
+/// The body as `T` when the answer has `status`; any other answer is the
+/// `LaneError` it carries, so every caller reads a refusal the same way.
+pub fn expect_json<T: serde::de::DeserializeOwned>(
+    answer: &LaneAnswer,
+    status: u16,
+    what: &'static str,
+) -> anyhow::Result<T> {
+    if answer.status != status {
+        return Err(parse_lane_error(answer).into());
+    }
+    serde_json::from_str(&answer.body).with_context(|| format!("decoding {what}"))
+}
+
 /// Shape 1: `application/problem+json`: `{ "type": string, "title": string, "detail"?: string }`
 fn parse_problem_json(val: &serde_json::Value, status: u16) -> Option<LaneError> {
     let ptype = val.get("type").and_then(|v| v.as_str())?;
@@ -201,7 +227,11 @@ pub fn loggable_url(url: &str) -> String {
         shown.push(':');
         shown.push_str(&port.to_string());
     }
-    shown.push_str(&loggable_path(parsed.path()));
+    // The parser gives a bare host the path `/`; one the address never had
+    // is not shown.
+    if parsed.path() != "/" || url.ends_with('/') {
+        shown.push_str(&loggable_path(parsed.path()));
+    }
     if let Some(query) = parsed.query() {
         shown.push('?');
         shown.push_str(query);
