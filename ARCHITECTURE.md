@@ -4,7 +4,7 @@ The Telmoni CLI on one page: what it is for, what it is made of, how a command r
 
 The platform the CLI talks to has a design of its own, `ARCHITECTURE.md` in [`telmoni/telmoni`](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md), checked out beside this repo as `../telmoni/ARCHITECTURE.md`: its door for machines, the `/cli` lanes, `/me`, `/v1` and sessions. This page covers the client. The SDKs, which record an agent's runs and send them to the platform's ingest, are the platform's too, under `sdk/` in that repository, with their contract and parity table on its page (*The SDKs*).
 
-**Where it stands:** version 0.1.2, released from CI on 23 October 2026 to GitHub, whose archive `install.sh` fetches on x86_64 Linux, and to crates.io as `telmoni-cli`, which every other platform builds from source with `cargo install`; `v0.1.1`, the first release from CI, reached GitHub alone (*A release*). It signs in and out, says who it is signed in as, and chooses an organization. Beyond its own session it changes nothing on the platform, except that `/cli/v1/me` makes a first organization for a person who belongs to none, as a console sign-in does.
+**Where it stands:** version 0.2.0, released from CI on 23 October 2026 to GitHub, whose archive `install.sh` fetches on x86_64 Linux, and to crates.io as `telmoni-cli`, which every other platform builds from source with `cargo install`; `v0.1.1`, the first release from CI, reached GitHub alone (*A release*). It signs in and out, says who it is signed in as, and chooses an organization. Beyond its own session it changes nothing on the platform, except that `/cli/v1/me` makes a first organization for a person who belongs to none, as a console sign-in does.
 
 ## Contents
 
@@ -131,16 +131,16 @@ flowchart TB
 
 | Block | What it is | What it keeps |
 |---|---|---|
-| `main.rs` | The only place that reads the environment and standard input: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1 | — |
+| `main.rs` | The only place that reads the environment and standard input: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1, or 4 when no login is usable | — |
 | `commands/` | One module per command, each handed its inputs as values | — |
 | `auth/device.rs` | The device flow, refresh, and the reading of a 401 by its type | — |
 | `auth/key.rs` | A key supplied for one command: `TELMONI_API_KEY`, else what `api_key_helper` prints, checked by its shape and never saved; and whether the variable's key is used, passed over, or asked about first | — |
-| `auth/storage.rs` | The saved login: the macOS Keychain on a Mac, else the credentials file, read leniently and written atomically | The Keychain item `telmoni`, `credentials.json` |
+| `auth/storage.rs` | The saved login, a device session or a saved key, one enum tagged by the file's `auth_type`: the macOS Keychain on a Mac, else the credentials file, read leniently and written atomically by `write_replacing`, which `config.json` shares | The Keychain item `telmoni`, `credentials.json` |
 | `config.rs` | The configuration file, the answers it keeps about `TELMONI_API_KEY`'s keys, and where the base URL comes from | `config.json` |
 | `client.rs` | The one `/v1` call, under an API key | — |
-| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes | — |
+| `transport.rs` | The seam every request goes through: TLS, deadlines, the plain-HTTP refusal, this machine past any proxy, the platform's error shapes; `LaneRequest::to` builds each request and `expect_json` reads each answer, so every refusal reaches the caller as the `LaneError` it is | — |
 | `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — |
-| `install.sh` | The installer: the machine's archive, a version, the checksum | — |
+| `install.sh` | The installer: the machine's archive, the latest tag read from the release page's redirect or a version, the checksum | — |
 
 ## Key flows
 
@@ -173,7 +173,7 @@ The CLI's state is two files in one directory: the person's configuration direct
 | File | Holds | Written |
 |---|---|---|
 | `credentials.json`, or on a Mac the Keychain item | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`. On a Mac to the Keychain, as a generic password under the service `telmoni` with the file's path as its account, the file only while the Keychain refuses, as a locked one does over SSH and one that would put up a dialog does when stderr is no terminal; with both, the newer is read, and a save the Keychain takes deletes the file. Elsewhere the file, atomically, mode `0600`, not encrypted |
-| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, a plain write: it holds no secret, the helper's command and never its key, a key's digest and never the key |
+| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, atomically like the credentials, so a crash cannot leave a torn file that reads as the hosted endpoint, under the umask's mode: it holds no secret, the helper's command and never its key (`config set api_key_helper` refuses a value carrying one), a key's digest and never the key |
 
 A copy that cannot be read or parsed reads as signed out, or as the default configuration, with a note that never quotes it, and a missing one silently. The `config` commands alone fail on a `config.json` that does not parse.
 
@@ -190,7 +190,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 ## Distribution
 
 - **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on x86_64 Linux and Apple-silicon macOS.
-- **A release** is the workspace's version bumped in one commit on `main`. Its push starts `.github/workflows/release.yml`, which waits for CI to pass on that commit, since crates.io's trusted publishing refuses a run that CI's `workflow_run` starts, then builds the x86_64 Linux archive and verifies the crate, and waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
+- **A release** is the workspace's version bumped in one commit on `main`. Its push starts `.github/workflows/release.yml`, which waits for CI to pass on that commit, since crates.io's trusted publishing refuses a run that CI's `workflow_run` starts, then builds the static x86_64 Linux archive, the binary with `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.txt` beside it, the last written by `cargo-about` (`about.toml`, `about.hbs`) from the linked crates, and verifies the crate, and waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
 - **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one.
 
 ## When something fails
@@ -198,14 +198,16 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | Fails | What a person sees | What recovers it |
 |---|---|---|
 | **The platform, or the network** | The platform's message or, when nothing answered, the URL and the cause; the session kept | The platform |
+| **A poll or the sign-in's `/me` that gets no answer, or a 5xx** | Nothing: the poll is asked again at twice the wait, at most a minute apart, until the code expires (RFC 8628 § 3.5), and the `/me` once more | — |
 | **A refresh whose answer is lost** | Nothing: it is asked again once, within the platform's grace | — |
 | **A slow or stalled host** | A timeout in seconds, never a hang | The host |
-| **The session, ended in the console** | "session ended; run `telmoni login`", and the saved login deleted | `telmoni login` |
+| **The session, ended in the console** | "session ended; run `telmoni login`", the saved login deleted, and exit 4, as for no login at all | `telmoni login` |
 | **A 401 of another type** | Its message; the session kept | The platform |
 | **A clock that runs slow** | Nothing: the refresh after the fact covers what the early one missed | — |
 | **A crash mid-write** | The previous credentials file, whole | — |
 | **A Keychain that would ask, over SSH or with stderr no terminal** | The login kept in the file instead, with a note; one saved in the Keychain unread, with a note | Unlocking it, the command at the Mac's own terminal, which may ask, or signing in again |
 | **A failing `api_key_helper`** | Its stderr, then `api_key_helper failed`, printed nothing, or did not answer; no request | The helper, or `config set api_key_helper` |
+| **A filesystem step that fails** | The step, the path and the reason the system gave (a full disk, a read-only home, a permission) | Whatever the reason names |
 | **A file that does not parse** | Signed out, or the default configuration, with a note; the `config` commands fail on it, and at a terminal the question about `TELMONI_API_KEY` comes back every time, its answer unkept | `telmoni login` for the credentials; mending or deleting `config.json` |
 | **No configuration directory, or a relative `TELMONI_CONFIG_DIR`** | The command says so and exits 1 | `HOME`, or an absolute `TELMONI_CONFIG_DIR` |
 | **A browser that cannot open** | A note; the code and the URL are printed already | Any browser |
@@ -239,6 +241,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **`Debug` written by hand wherever a secret lives** | A log line or a failing test prints no token, and a field added later must be placed | Each such struct carries its own `Debug` |
 | **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The workflow lint is a CI job beside it, outside the gate |
 | **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | One platform until the macOS build is signed; checking provenance needs `gh` |
+| **The Linux archive static, on musl** | One binary runs on every x86_64 Linux, whatever its glibc or none, Alpine and RHEL 8 included, with no crate changed | CI's gate tests the GNU build; the musl one is first built by the release's dist job, which stops before anything is published if it fails |
 | **The command `telmoni`, from the crate `telmoni-cli`** | The command carries the product's name, as `stripe` and `gh` do, and `telmoni` on crates.io, as on PyPI and npm, is the SDK, so the crate takes the suffix; the platform's server binary is `telmoni-server`, so one program answers to the bare name | `cargo install telmoni` lands on the SDK: cargo says it has no binaries, and the SDK crate's description names `telmoni-cli` |
 
 ## Known gaps
@@ -248,6 +251,6 @@ The ones that shape the design, each kept here until it is closed:
 - **Signing in again** leaves the earlier session live, under Active sessions, until it ends there.
 - **`install.sh` checks the checksum, not the provenance**, since checking it needs `gh`.
 - **`slow_down` grows the interval for good**, where the platform holds a poll to the interval it started with; harmless.
-- **Some numbers are unnamed literals:** the 60-second refresh skew, the 5-second `slow_down` step and the 1-second interval floor.
+- **Some numbers are unnamed literals:** the 5-second `slow_down` step and the 1-second interval floor.
 - **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, a signed-in run of the binary, and the question `status` asks at a terminal, since no test runs at one.
 - **`output_format` is accepted and stored**, and no command reads it.
