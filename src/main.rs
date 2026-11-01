@@ -157,7 +157,14 @@ async fn main() {
             let env_key = api_key_env.and_then(|key| {
                 match env_key_use(&key, &config.api_key_answers, at_terminal, args.json) {
                     EnvKeyUse::Use => Some(key),
-                    EnvKeyUse::PassOver => None,
+                    EnvKeyUse::PassOver => {
+                        // Said, so a no kept from days ago is no mystery.
+                        eprintln!(
+                            "note: the key in TELMONI_API_KEY was declined here and is passed \
+                             over; telmoni config set use_api_key_env true uses it"
+                        );
+                        None
+                    }
                     EnvKeyUse::Ask => ask_to_use(&key, &config_path).then_some(key),
                 }
             });

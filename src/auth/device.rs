@@ -390,7 +390,7 @@ const UNAUTHENTICATED: &str = "/errors/auth/unauthenticated";
 const NOT_FOUND: &str = "/errors/auth/not-found";
 
 /// The session is over: the platform said so, or nothing is left to renew it
-/// with. The credentials file is gone by the time this is returned.
+/// with. The saved login is gone by the time this is returned.
 #[derive(Debug)]
 pub struct SessionEnded;
 
@@ -488,7 +488,7 @@ pub(crate) fn unanswered(err: &anyhow::Error) -> bool {
 /// `POST /cli/v1/me` for the stored session, held to the platform's 401 rules: a
 /// bearer refused as expired or unknown gets one refresh, which decides
 /// whether the session lives, and one retry; a refusal that speaks about the
-/// session means it was ended elsewhere, so the credentials file goes.
+/// session means it was ended elsewhere, so the saved login goes.
 /// Nothing else deletes it: a 5xx or a dropped connection says nothing about
 /// whether the session is still live.
 pub async fn fetch_me_for_session(
@@ -528,8 +528,8 @@ pub async fn fetch_me_for_session(
 }
 
 /// A refusal that speaks about the caller's credentials ends the session, and
-/// the credentials file goes. Any other failure leaves the file alone and
-/// surfaces the server's message.
+/// the saved login goes. Any other failure leaves it alone and surfaces the
+/// server's message.
 fn ended_or_surfaced(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Error {
     if let Some(problem_type) = refused_credentials(&err) {
         debug!(problem_type, "the session has ended");
@@ -543,7 +543,7 @@ fn ended_or_surfaced(store: &CredentialsStore, err: anyhow::Error) -> anyhow::Er
 
 fn session_ended(store: &CredentialsStore) -> anyhow::Error {
     if let Err(err) = store.clear() {
-        tracing::warn!(error = %err, "the ended session's credentials file stays; remove it yourself");
+        tracing::warn!(error = %err, "the ended session's saved login stays; remove it yourself");
     }
     anyhow::Error::new(SessionEnded)
 }
