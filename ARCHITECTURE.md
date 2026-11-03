@@ -12,9 +12,15 @@ The platform the CLI talks to has a design of its own, `ARCHITECTURE.md` in [`te
 - [Goals and constraints](#goals-and-constraints)
 - [Context](#context)
 - [Building blocks](#building-blocks)
+- [Commands and their lanes](#commands-and-their-lanes)
 - [Key flows](#key-flows)
+- [Configuration](#configuration)
 - [Data](#data)
+- [Output and exit codes](#output-and-exit-codes)
+- [The transport](#the-transport)
+- [Reading the platform's errors](#reading-the-platforms-errors)
 - [Security](#security)
+- [Testing](#testing)
 - [Distribution](#distribution)
 - [When something fails](#when-something-fails)
 - [What comes next](#what-comes-next)
@@ -27,7 +33,7 @@ The CLI, `telmoni`, is how a person or a machine uses Telmoni from a terminal. T
 - signs a person in with a code approved in any browser, or a machine in with an API key;
 - says who it is signed in as, and in which organization;
 - lists the person's organizations, and chooses the one it acts in;
-- keeps a configuration file: the endpoint to sign in against.
+- keeps a configuration file: the endpoint to sign in against, a command that prints an API key, and the answers a person gave about the key in `TELMONI_API_KEY`.
 
 It is **one Rust binary**, a thin shell over a library the tests drive directly, and a **client of the platform and of nothing else**: nothing here runs on a server, holds a database or verifies a token.
 
@@ -96,7 +102,7 @@ flowchart LR
 | **A person** | Who signs in, at a terminal, over SSH or in a container | Commands; the user code and the URL on stdout |
 | **A script or CI job** | Whoever holds an organization's API key | The key in `TELMONI_API_KEY` or from `api_key_helper` for each command, or saved once by `login --with-key`; then `/v1` reads |
 | **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI |
-| **The platform's server** | The one host the CLI calls, `api.telmoni.com` on the hosted service: the `/cli/v1` lanes for a session, `/v1` for a key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
+| **The platform's server** | The one host the CLI calls, `api.telmoni.com` by default: the `/cli/v1` lanes for a session, `/v1` for a key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
 | **The platform's console** | Where the person approves the code; the CLI never calls it, and opens its device page only when it is on the endpoint's own origin or stands beside the machine host | Nothing from the CLI; the page's address, printed |
 | **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct |
 | **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` |
@@ -131,9 +137,14 @@ flowchart TB
 
 | Block | What it is | What it keeps |
 |---|---|---|
-| `main.rs` | The only place that reads the environment and standard input: it resolves both files' paths, builds the transport, dispatches, and prints an error and exits 1, or 4 when no login is usable | — |
-| `commands/` | One module per command, each handed its inputs as values | — |
-| `auth/device.rs` | The device flow, refresh, and the reading of a 401 by its type | — |
+| `main.rs` | The only place that reads the environment and standard input, beside clap's `env` on `login --endpoint`: it sets up `tracing` on stderr, resolves both files' paths, builds the transport, asks the question about `TELMONI_API_KEY`, reads a piped key (`read_piped_key`), dispatches, and prints an error and exits 1, or 4 when no login is usable | — |
+| `lib.rs` | The library the binary and the suites share, `unsafe` forbidden | — |
+| `commands/login.rs` | The device flow end to end, `--with-key`, the shape check of a key (`validate_api_key`), and which page may open unasked (`same_deployment`) | — |
+| `commands/logout.rs` | Ending the session on the platform (`end_session`), the revoke's organization and its fallbacks, then deleting the saved login | — |
+| `commands/status.rs` | `status` and `whoami`, for a device session, a saved key or a key supplied for the command, in text or `--json`, and the saved login a supplied key passed over (`UnusedLogin`) | — |
+| `commands/org.rs` | `org list` from the cache, `org switch` held to `/cli/v1/me`'s answer, and the "Active organization" line three commands print | — |
+| `commands/config_cmd.rs` | `config get`, `set` and `list` | — |
+| `auth/device.rs` | The device start and poll, the backoff loop (`poll_until_granted`), `/cli/v1/me`, refresh and revoke, and the reading of a 401 by its type (`refused_credentials`, `bearer_expired`); the two errors that exit 4, `SessionEnded` and `NotSignedIn` | — |
 | `auth/key.rs` | A key supplied for one command: `TELMONI_API_KEY`, else what `api_key_helper` prints, checked by its shape and never saved; and whether the variable's key is used, passed over, or asked about first | — |
 | `auth/storage.rs` | The saved login, a device session or a saved key, one enum tagged by the file's `auth_type`: the macOS Keychain on a Mac, else the credentials file, read leniently and written atomically by `write_replacing`, which `config.json` shares | The Keychain item `telmoni`, `credentials.json` |
 | `config.rs` | The configuration file, the answers it keeps about `TELMONI_API_KEY`'s keys, and where the base URL comes from | `config.json` |
@@ -142,11 +153,38 @@ flowchart TB
 | `xtask/` | The gate, `cargo xtask ci`, and packaging, `cargo xtask dist` | — |
 | `install.sh` | The installer: the machine's archive, the latest tag read from the release page's redirect or a version, the checksum | — |
 
+## Commands and their lanes
+
+Every command, what it sends and in what order. Global to all: `-v`/`--verbose`, and clap's `--help` and `--version`. "Refresh when expiring" is `POST /cli/v1/auth/refresh` with `{ refreshToken, sessionRowId }`, sent first when the access token is within `REFRESH_SKEW_SECS` (60) of its expiry (`auth/storage.rs`); the `/cli/v1/me` of `status` and `org switch`, and `logout`'s revoke, also get one refresh and one retry when its bearer is refused as expired or unknown (*Reading the platform's errors*).
+
+| Command | Its flags and arguments | What it calls | What it changes here |
+|---|---|---|---|
+| `login` | `--endpoint <url>`, filled from `TELMONI_ENDPOINT` too; `--no-browser` | `POST /cli/v1/auth/device`; `POST /cli/v1/auth/device/poll` with `{ deviceCode }` every interval; `POST /cli/v1/me` under the new bearer, naming no organization, asked once more if it gets no answer | Saves the device session |
+| `login --with-key` | Conflicts with `--no-browser`; `--endpoint` as above | Nothing: the key is checked by its shape alone | Saves the key, read from standard input (at most 4096 bytes; a terminal refused) |
+| `logout` | — | A device session: refresh when expiring; `POST /cli/v1/sessions/{sessionRowId}/revoke` with `x-organization-id` the one `TELMONI_ORG` names, else the active one, else the first cached, none when the cache holds none; on a 403 to one that named an organization, again naming none; on a 400, `POST /cli/v1/me` naming none, then the revoke naming its active organization. A saved key: nothing | Deletes the saved login whatever the answer; signed out already, prints "Not signed in" and exits 0 |
+| `status`, `whoami` | `--json` | A key supplied for the command, or a saved one: `GET /v1/organization` under it. A device session: refresh when expiring, then `POST /cli/v1/me` with `x-organization-id` the one `TELMONI_ORG` names, else the active one. Signed out: nothing | A device session's cached person and organizations, rewritten from the answer |
+| `org list` | — | Nothing: the cached list, the active one marked `*` | — |
+| `org switch <ORGANIZATION>` | An id (`org_…`) or an exact slug, resolved against the cache | Refresh when expiring, then `POST /cli/v1/me` with the target's id | The cached list, always; the active organization, only when the answer acts in the target and its list still gives it that name |
+| `config get <key>`, `config set <key> <value>`, `config list` | Keys `endpoint`, `output_format`, `api_key_helper`, `use_api_key_env` (`ConfigKey` in `config.rs`) | Nothing | `config.json` |
+
+`org` refuses a saved API key as it refuses no login, exit 4: its lanes are a person's. `login`, `logout` and `org` never act with `TELMONI_API_KEY` or the helper; only `status` and `whoami` do.
+
 ## Key flows
 
 ### Signing in
 
-`telmoni login` asks the server's `/cli/v1` lanes for a device code, prints the user code and the URL, and opens a browser only on a page of the deployment it signs in to: the endpoint's own origin, or the console beside a machine host. It polls at the interval the platform sets until the person approves or denies the code or it expires, then asks `/cli/v1/me` who signed in, and saves the login. `login --with-key` reads a key from standard input, never from a terminal, checks its shape and saves it, with no call.
+`telmoni login` asks the server's `/cli/v1` lanes for a device code, prints the user code and the URL, and opens a browser only on a page of the deployment it signs in to: the endpoint's own origin, or the console beside a machine host. It polls at the interval the platform sets until the person approves or denies the code or it expires, then asks `/cli/v1/me` who signed in, and saves the login. The loop is `poll_until_granted` (`auth/device.rs`), its sleep and clock passed in: it waits an interval before every poll, never less than a second (`login.rs`), checks the code's lifetime on its own clock before each, and reads each answer as `PollOutcome`:
+
+| Answer | Outcome | Then |
+|---|---|---|
+| 200 | `Granted` | The tokens, then `/cli/v1/me` |
+| 202 | `Pending`, or `SlowDown` when its body says `"status": "slow_down"` | The same interval, or 5 seconds more from then on |
+| 429 | `RateLimited` | One wait of the problem's `retry_after_secs` or the interval, whichever is longer |
+| No answer, or a 5xx | `Unanswered` | The interval doubled, at most `MAX_POLL_INTERVAL` (60 s), as RFC 8628 § 3.5 asks |
+| 401 typed `invalid-token` | `Failed` | "the device code is no longer valid; run telmoni login again" |
+| Any other: 403 denied, 400 expired | `Failed` | The platform's message |
+
+`login --with-key` reads a key from standard input, never from a terminal, checks its shape and saves it, with no call.
 
 ### A key for one command
 
@@ -162,22 +200,117 @@ At a terminal — standard input and standard error both one, and no `--json` �
 
 `telmoni logout` refreshes if it must, then revokes the session row through the `/cli` lane that ends one, the same revoke the console's Active sessions makes, falling back when the cached organization is one the person has left. It deletes the saved login, in the Keychain and the file, whatever the answer, and says so when the platform did not confirm.
 
+### Refreshing
+
+The platform's access token is opaque and lives minutes; the refresh token rotates on every use. A refresh is asked for early, within `REFRESH_SKEW_SECS` of the expiry the file keeps, or late, once, when a bearer is refused as `token-expired` or `invalid-token`. `refresh_session` (`auth/device.rs`) sends it, and when the answer is lost, a 5xx or nothing to read, sends the same token again at once: the platform may have spent it, and takes it again only within its reuse grace, thirty seconds (`REUSE_GRACE_SECS` in the core's `crates/auth/src/db/refresh_tokens.rs`). The new pair is saved before anything else is sent; an answer without a refresh token leaves none, so the next refresh ends the session. A refresh refused by a 401 of any of the three types below ends it now, `token-expired` included: on that lane it is the refresh token that is refused.
+
 ### When the platform says no
 
-A failed answer is read in the platform's three error shapes, and a 401 by its problem type. A 401 typed `unauthenticated` ends the session; `token-expired` or `invalid-token` on a call gets one refresh, whose answer decides; any other 401, a 5xx or a dropped connection ends nothing.
+A failed answer is read in the platform's three error shapes, and a 401 by its problem type (*Reading the platform's errors*). A 401 typed `unauthenticated` ends the session; `token-expired` or `invalid-token` on a call gets one refresh, whose answer decides; any other 401, a 5xx or a dropped connection ends nothing.
+
+## Configuration
+
+Every input the CLI reads, and which wins. The environment is read once, in `main.rs`, and passed down as values; a variable that is blank, or only spaces, is no variable.
+
+| Input | What it sets | Read by |
+|---|---|---|
+| `TELMONI_ENDPOINT` | The base URL a command without a saved login talks to | `main.rs`, and clap's `env` on `login --endpoint` |
+| `TELMONI_API_KEY` | A key for `status` and `whoami`, ahead of the saved login, never saved (*A key for one command*) | `main.rs` |
+| `TELMONI_ORG` | The organization `status` and `logout` act in for this command, by id or exact slug from the cached list; never saved as the active one | `main.rs` |
+| `TELMONI_CONFIG_DIR` | The directory both files live in, trimmed; an absolute path alone, a relative one exits 1 | `main.rs` |
+| `.env` in the working directory | The four variables above, after the real environment; debug builds only, compiled out of a release (`dotenv_var`) | `main.rs` |
+| `HOME`, and on Linux `XDG_CONFIG_HOME` | The configuration directory when `TELMONI_CONFIG_DIR` is unset | `dirs::config_dir` |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, and their lowercase forms | A proxy for every host but this machine | reqwest |
+| `config.json` | `endpoint`, `output_format`, `api_key_helper`, `api_key_answers` (*Data*) | `config.rs` |
+| Flags | `-v`, `login --endpoint`, `--with-key`, `--no-browser`, `status --json` (*Commands and their lanes*) | clap |
+
+`RUST_LOG` is not read: `-v` is the one switch for the log.
+
+**The endpoint**, for a command with no saved login to use (`login`, a signed-out `status`, `status` under a supplied key): `--endpoint`, then `TELMONI_ENDPOINT`, then `config.json`'s `endpoint`, then `DEFAULT_TELMONI_ENDPOINT`, `https://api.telmoni.com` (`resolve_endpoint` in `config.rs`, which logs its source under `-v`). Each is trimmed of spaces and trailing slashes, and one without a scheme takes `http://` for a loopback host and `https://` for any other; a blank one is skipped. A saved login carries the endpoint it was made against, and every later command on it goes there, whatever the environment says.
+
+**The key `status` acts with:** `TELMONI_API_KEY`, as the person at a terminal answered for it, then the output of `api_key_helper`, then the saved login.
+
+**The organization:** `TELMONI_ORG`, then the active organization the saved login holds; for `logout`'s revoke, then the first cached.
+
+**The directory:** `TELMONI_CONFIG_DIR`, then `dirs::config_dir()` joined with `telmoni`; with neither, the command says so and exits 1.
 
 ## Data
 
-The CLI's state is two files in one directory: the person's configuration directory, `~/Library/Application Support/telmoni/` on macOS and `~/.config/telmoni/` on Linux, or the one `TELMONI_CONFIG_DIR` names, an absolute path, so a shell with a value of its own keeps a login of its own; never one resolved against the working directory, so a relative path is refused. On a Mac, a Keychain item holds the login in the credentials file's place, its account the file's path as given, so each directory's login is an item of its own.
+The CLI's state is two files in one directory: the person's configuration directory, `~/Library/Application Support/telmoni/` on macOS and `~/.config/telmoni/` on Linux (`$XDG_CONFIG_HOME/telmoni/` when that is set), or the one `TELMONI_CONFIG_DIR` names, an absolute path, so a shell with a value of its own keeps a login of its own; never one resolved against the working directory, so a relative path is refused. On a Mac, a Keychain item holds the login in the credentials file's place, its account the file's path as given, so each directory's login is an item of its own.
 
 | File | Holds | Written |
 |---|---|---|
 | `credentials.json`, or on a Mac the Keychain item | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`. On a Mac to the Keychain, as a generic password under the service `telmoni` with the file's path as its account, the file only while the Keychain refuses, as a locked one does over SSH and one that would put up a dialog does when stderr is no terminal; with both, the newer is read, and a save the Keychain takes deletes the file. Elsewhere the file, atomically, mode `0600`, not encrypted |
-| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, atomically like the credentials, so a crash cannot leave a torn file that reads as the hosted endpoint, under the umask's mode: it holds no secret, the helper's command and never its key (`config set api_key_helper` refuses a value carrying one), a key's digest and never the key |
+| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, atomically like the credentials, so a crash cannot leave a torn file that reads as the default endpoint, under the umask's mode: it holds no secret, the helper's command and never its key (`config set api_key_helper` refuses a value carrying one), a key's digest and never the key |
 
 A copy that cannot be read or parsed reads as signed out, or as the default configuration, with a note that never quotes it, and a missing one silently. The `config` commands alone fail on a `config.json` that does not parse.
 
+## Output and exit codes
+
+Stdout carries the command's output and nothing else; notes, the question about `TELMONI_API_KEY`, "Waiting for approval…" and every error go to stderr, and so does `-v`'s log (`tracing`, the CLI's own lines at `debug` and other crates' at `info`; without `-v`, its own at `info` and the rest at `warn`; no timestamps, colour only when stderr is a terminal).
+
+**Text** is the one format of every command but `status`, written for a person and free to change. `login` prints the user code and the URL on stdout. **`status --json`** (and `whoami --json`) prints one pretty JSON object, camelCase, and on a failure nothing on stdout at all:
+- a device session: `authType` `"device"`, `endpoint`, `person` (`userId`, `email`, `displayName`), `activeOrganization` (`organizationId`, `slug`, `label`, `role`, or `null`), `organizationCount`, `tokenExpiresInSecs`;
+- a key: `authType` `"api_key"`, `keySource` (`saved`, `environment` or `helper`), `endpoint`, `organization` (`organizationId`, `slug`, `label`), and `unusedLogin` (`device` or `api_key`) only when a supplied key passed a saved login over.
+
+Every `endpoint` shown passes through `loggable_url`. `output_format` in `config.json` is stored and read by nothing.
+
+| Exit | When |
+|---|---|
+| 0 | The command did what it says, `logout` with nothing to sign out of included |
+| 1 | Any other error, its one line on stderr: the platform's message, a request with no answer, a file step, a refused value, a relative `TELMONI_CONFIG_DIR`, no configuration directory |
+| 2 | clap's own: an unknown command, flag or value |
+| 4 | No usable login: `SessionEnded` (the platform ended it, or nothing is left to renew it with; the saved login is gone) or `NotSignedIn` (`status` with no login and no key, `org` with none or with a saved key), so a script signs in again rather than retrying |
+
+## The transport
+
+Every request goes through `Transport::send` (`transport.rs`), one trait the suites replace; `ReqwestTransport` is the real one.
+
+- **Two clients, one builder** (`client_builder`): one through any proxy the environment names, one with none for this machine (`bypasses_proxy`), identical in all else.
+- **Deadlines:** `REQUEST_TIMEOUT`, 30 seconds from connecting to the answer's last byte, and `CONNECT_TIMEOUT`, 10 seconds of that to connect.
+- **No redirect followed** (`Policy::none()`): no lane answers one, and reqwest would carry the bearer to a same-host target on another scheme. A 3xx is read as the error it is.
+- **TLS** is rustls with the bundled web PKI roots (reqwest's `rustls-tls`, default features off), so trust is the same on every machine and the system's store is not read; HTTP/1.1 alone, since `http2` is off with the defaults.
+- **Plain HTTP only to this machine** (`refuse_cleartext`, before any socket): `localhost`, a name under `.localhost`, or a loopback address, read from the parsed URL (`is_loopback_host`), so `localhost.example.com` is not one. The device start is refused like the rest, though it carries no credential, since it is answered one.
+- **Every request** carries `User-Agent: telmoni-cli/<version> (<os>; <arch>)` (`build_user_agent`), `Authorization: Bearer` when it acts with a token or key, `x-organization-id` when it names an organization, and a JSON body when it has one. `LaneRequest::to` builds the URL from the endpoint and the lane's path.
+- **Retries** are the lanes' own, never the transport's: the device poll (*Signing in*), one more refresh and one more sign-in `/cli/v1/me` when the answer is lost, and the one refresh-and-retry after a refused bearer. Nothing else is sent twice: a 429 or a 5xx on any other call is the error it carries.
+- **`Retry-After`** is read from the problem body's `retry_after_secs`, the extension the platform also sends as the header (`RETRY_AFTER_SECS` in the core's `crates/shared/src/error_schema.rs`), not from the header; only the device poll waits on it.
+- **A request that got no answer** is one line naming the address and the cause at the bottom of the error chain (`request_failed`), so a refused connection, a name that does not resolve and a certificate that does not verify read apart; a timeout is "timed out waiting for <url>".
+
+## Reading the platform's errors
+
+`parse_lane_error` (`transport.rs`) reads any answer it was not expecting in one of three shapes, and `expect_json` hands it to the caller as a `LaneError` (status, problem type, message, `retry_after_secs`):
+
+| Shape | Recognised by | Message |
+|---|---|---|
+| RFC 9457 problem details | A JSON body with string `type` and `title` | `title: detail`, or the title alone when there is no detail |
+| `{ "error": … }` | A JSON body with a string `error` | That string; nothing the CLI calls sends it today |
+| Anything else | — | `request failed (<status>)` and the body's first 200 characters |
+
+A 401 is then read by its type (`refused_credentials` in `auth/device.rs`), and only auth's own three mean anything:
+
+| Type | On `/cli/v1/me` or a revoke | On `/cli/v1/auth/refresh` |
+|---|---|---|
+| `/errors/auth/token-expired` | One refresh and one retry | The session ends |
+| `/errors/auth/invalid-token` | One refresh and one retry: an expired bearer is unknown once the platform's retention sweep has deleted its row | The session ends |
+| `/errors/auth/unauthenticated` | The session ends | The session ends |
+| Any other, `service-credential-rejected` or no type at all | Its message; nothing ends | Its message; nothing ends |
+
+The session ending is `SessionEnded`: the saved login deleted, in the Keychain and the file, "session ended; run telmoni login", exit 4. A 5xx or no answer never deletes it. On a revoke, a 204 is done and a 404 typed `/errors/auth/not-found` is done already; the server's own untyped 404 is not. `logout` takes a revoke refused as a session already over, or refused again after a fresh refresh, as confirmed; anything else it reports as unconfirmed and signs out here regardless. A 401 under an API key on `/v1` is its message, and leaves the saved login alone.
+
 ## Security
+
+What the design defends against, and what it leaves to the machine:
+
+| Threat | Defence |
+|---|---|
+| **A network between the CLI and the platform** | TLS to every host but this machine, no redirect followed, and a proxy never handed loopback traffic |
+| **A checkout the CLI runs in** (a `.env`, a `config.json` naming its own endpoint) | A `.env` read by debug builds alone, and no path resolved against the working directory |
+| **An answer that names another host** (a verification URL elsewhere) | The URL printed, and opened only when `same_deployment` holds |
+| **Other users on the machine** | The credentials file created `0600` from the start, a directory made for it `0700` (`write_replacing`), and on a Mac the Keychain |
+| **Logs, CI output, `ps` and shell history** | No secret printed or logged, `Debug` by hand, no key as an argument |
+| **A key left exported in a shell** | Asked about once at a terminal before it stands in for the person's own login |
+
+Out of reach, on purpose: a program running as the same user, which can read the credentials file on Linux and ask for the Keychain item on a Mac; root; and a platform that is itself compromised, whose answers the CLI trusts as the one authority on the session.
 
 - **One host.** Every request goes to the base URL, a redirect is answered as an error so a bearer never follows one, and the browser opens only on the endpoint's own origin or the console beside it.
 - **TLS to every endpoint but a loopback one.** rustls with bundled web PKI roots, the same on every host; plain HTTP is refused before anything is sent unless the host is a loopback one, and a request to this machine never goes through a proxy.
@@ -185,13 +318,30 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 - **No secret is printed.** No token, refresh token, device code or API key reaches stdout, stderr or `-v`'s log, the question about `TELMONI_API_KEY` names the variable and never its key, a key refused by its shape is named by where it came from, never by its value, saved credentials that do not parse are logged under `-v` by line and column, never by their contents, and an address a log line or an error shows is rebuilt without any credentials written into it and with every segment carrying an API key's prefix cut out (`transport::loggable_url`), as the platform cuts one from its own log.
 - **A key never rides a command line.** `login --with-key` reads standard input and refuses a terminal, so no key reaches `ps`, shell history or a CI log, and `TELMONI_API_KEY` is read once, at the edge, and never saved.
 - **A checkout cannot steer a released binary.** A `.env` is read in debug builds only, and neither file is ever read relative to the working directory: `TELMONI_CONFIG_DIR` takes an absolute path alone.
+- **A key is never written where a command is meant to be.** `config set api_key_helper` refuses a value with a word that looks like a key, `tm_` and at least 32 URL-safe characters after it (`holds_a_key` in `config.rs`), and the answers about `TELMONI_API_KEY` are kept by digest. The helper's stdout is the key and is never shown; its stderr is the person's, its standard input empty, and it is killed after `HELPER_TIMEOUT`, 30 seconds (`auth/key.rs`).
 - **The supply chain is checked.** `--locked` on every gate step that resolves dependencies, `cargo deny` on every run and daily, `unsafe` forbidden, and every release's archives and installer attested for the release workflow.
+
+## Testing
+
+Every suite is hermetic: no network, no sleeps, no person's files or Keychain. Each runs under `cargo xtask ci`'s `cargo test --workspace --locked`.
+
+| Suite | Drives | What it proves |
+|---|---|---|
+| `tests/auth_tests.rs` | The library, through a `MockTransport` that answers from a queue, records every request and fails a test that sends more than any should; credentials under `std::env::temp_dir()` through `CredentialsStore::new`, the file alone; the poll's sleep and clock passed in, every wait asserted | The platform's own answers decode (`tests/fixtures/me.json` and `authn.json`, copies of the core's `contract/responses/auth/`); the poll's outcomes and backoff; refresh, its retry when unanswered, and the spent token; every 401 rule on `/me`, a refresh and a revoke, and that a 5xx or no answer keeps the login; logout's organization fallbacks; `org switch` and `TELMONI_ORG` by id or slug, never by label, held to the answer; the endpoint's precedence; the key's shape, the helper, and the question about the variable's key; the files private and atomic; the plain-HTTP refusal, the proxy bypass and `loggable_url`; `Debug` never printing a secret |
+| `tests/cli_tests.rs` | The built binary (`CARGO_BIN_EXE_telmoni`), in a home and working directory of its own, its environment cleared to that home and what the test sets | What `main.rs` reads and where its files land: the signed-out `status` and its exit 4, the configuration file and the environment over it, `.env` in a debug build alone, `login --with-key` and `logout` without a request, a key for one command and unasked use where nobody can answer, a login per `TELMONI_CONFIG_DIR`; no secret on either stream. A command that would reach a host points at a plain-HTTP remote one, refused before any socket |
+| `src/commands/login.rs` | `same_deployment` | The console beside a machine host opens; another host, scheme or port does not |
+
+On a Mac the binary's suite reads and writes Keychain items named for its sandbox's paths, never a person's. Untested: see *Known gaps*.
 
 ## Distribution
 
-- **The gate** is `cargo xtask ci`, the same locally and in CI, run in CI on x86_64 Linux and Apple-silicon macOS.
+- **The gate** is `cargo xtask ci` (`xtask/src/main.rs`), the same locally and in CI: `cargo fmt --all --check`; the toolchain channel in `rust-toolchain.toml` (1.99.1) equal to `rust-version` in `Cargo.toml`; clippy over every target with `-D warnings`; build, test and doc, each with warnings denied; then `cargo deny --locked check` (`deny.toml`: licences, advisories, bans and sources, for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`). Every step but fmt is `--locked`. The workspace's lints (`Cargo.toml`) deny `unwrap`, `expect`, `panic`, indexing and string slicing outside tests (`clippy.toml` allows them in tests), and `unsafe` everywhere.
+- **CI** (`.github/workflows/ci.yml`), on every push to `main` and every pull request: the gate on `ubuntu-24.04` (linux-x86_64) and `macos-15` (macos-aarch64), with `cargo-deny` installed for it; `actionlint`, pinned by version and checksum, over the workflows; and one `CI status` job that passes only when both did. `audit.yml` runs `cargo deny check advisories` against the pinned lock daily at 05:30 UTC, and Dependabot proposes the actions' updates weekly, a week after each is out.
 - **A release** is the workspace's version bumped in one commit on `main`. Its push starts `.github/workflows/release.yml`, which waits for CI to pass on that commit, since crates.io's trusted publishing refuses a run that CI's `workflow_run` starts, then builds the static x86_64 Linux archive, the binary with `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES.txt` beside it, the last written by `cargo-about` (`about.toml`, `about.hbs`) from the linked crates, and verifies the crate, and waits for the owner's approval in its `release` environment: one job tags the commit `v*`, attests the archive and `install.sh` and makes the GitHub release, and another publishes the crate to crates.io by trusted publishing, so no token is stored anywhere. A version already on crates.io with no tag here, as `0.1.0` is, waits for the next.
-- **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one.
+  - Its first job, `plan`, requires `Cargo.toml` and both workspace entries in `Cargo.lock` to agree on a plain `X.Y.Z`, asks crates.io and GitHub what the version still lacks, and runs only that, so every other push to `main` ends green with nothing done; the version tagged on another commit while still unreleased somewhere stops it, for that commit's run to finish.
+  - `dist` builds where nothing can publish, restoring no cache: `cargo xtask dist --target x86_64-unknown-linux-musl` (`xtask/src/dist.rs`), which builds the release profile (thin LTO, one codegen unit, symbols stripped), writes the notices with `cargo-about` 0.9.3, packs `telmoni-linux-x86_64.tar.gz` and writes `SHA256SUMS`; then `cargo package -p telmoni-cli --locked`, so publishing need not compile. The crate holds `src/`, `README.md`, `LICENSE` and `NOTICE` alone (`include` in `Cargo.toml`).
+  - The GitHub release adds `install.sh` and its checksum to `SHA256SUMS`, and its notes are the commit subjects since the previous tag. Every action in the workflow is pinned to a commit.
+- **`install.sh`** picks the archive for the machine, checks it against `SHA256SUMS`, and installs it. The checksum catches a corrupted download; the provenance, which `gh attestation verify` checks, catches a swapped one. It reads `TELMONI_VERSION` (a tag, else the latest, read from `releases/latest`'s redirect), `TELMONI_INSTALL_DIR` (else `/usr/local/bin` when writable or run as root, else `~/.local/bin`), `TELMONI_INSTALL_DRY_RUN` (print each change, make none) and `TELMONI_REPO`; it needs `curl`, `tar` and `sha256sum` or `shasum`, raises itself with `sudo` or `doas` only for a directory it cannot write, and warns when that directory is not on `PATH`. On macOS and ARM Linux it stops and names `cargo install --locked telmoni-cli`.
 
 ## When something fails
 
@@ -216,7 +366,7 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 ## What comes next
 
 - **A command that touches customer data** comes after its lane in the platform: `/cli` for a signed-in person, `/v1` for an API key (`AGENTS.md`).
-- **A hook for a coding agent's session**, sent as a run, once the platform's ingest reads one out of what it would send ([the platform's design](https://github.com/telmoni/telmoni/blob/main/ARCHITECTURE.md#where-it-goes-next)).
+- **A coding agent's sessions are not the CLI's to record:** the coding-agent plugins, each a repository of its own on the platform's SDKs, send them, and the CLI stays a client of `/cli` and `/v1`.
 
 ## Decisions
 
@@ -242,6 +392,10 @@ A copy that cannot be read or parsed reads as signed out, or as the default conf
 | **One gate, locally and in CI** | CI's Rust job is this same command, on both shipped platforms | The workflow lint is a CI job beside it, outside the gate |
 | **Native builds, and provenance instead of a key** | Each archive is built on the platform it runs on, where CI's gate passed, and no signing key is kept anywhere: the certificate is minted per run | One platform until the macOS build is signed; checking provenance needs `gh` |
 | **The Linux archive static, on musl** | One binary runs on every x86_64 Linux, whatever its glibc or none, Alpine and RHEL 8 included, with no crate changed | CI's gate tests the GNU build; the musl one is first built by the release's dist job, which stops before anything is published if it fails |
+| **Retries only where a lane asks for one** | The device poll is RFC 8628's loop, and a refresh or a granted sign-in's `/me` lost on the way costs the session or the grant if not asked again; anything else sent twice could act twice | A script retries a 429 or a 5xx itself |
+| **`retry_after_secs` from the problem body, not the `Retry-After` header** | The platform writes both from one value, and the body is already parsed for the problem's type | A 429 from something in front of the platform, with the header alone, waits only the poll's interval |
+| **Exit 4 for no usable login, 1 for everything else** | A script tells "sign in again" from "try again later" without parsing a message | One code for every other failure |
+| **`-v` the one switch for the log, `RUST_LOG` unread** | The environment is read at the edge, and one flag works the same in a terminal and a CI log | No per-crate filter without a rebuild |
 | **The command `telmoni`, from the crate `telmoni-cli`** | The command carries the product's name, as `stripe` and `gh` do, and `telmoni` on crates.io, as on PyPI and npm, is the SDK, so the crate takes the suffix; the platform's server binary is `telmoni-server`, so one program answers to the bare name | `cargo install telmoni` lands on the SDK: cargo says it has no binaries, and the SDK crate's description names `telmoni-cli` |
 
 ## Known gaps
@@ -254,3 +408,4 @@ The ones that shape the design, each kept here until it is closed:
 - **Some numbers are unnamed literals:** the 5-second `slow_down` step and the 1-second interval floor.
 - **Untested:** the real transport's deadlines and connection failures, the direct client's lack of a proxy, the browser opening, a signed-in run of the binary, and the question `status` asks at a terminal, since no test runs at one.
 - **`output_format` is accepted and stored**, and no command reads it.
+- **An answer's size is unbounded:** the body is read whole into memory, limited only by `REQUEST_TIMEOUT`.
