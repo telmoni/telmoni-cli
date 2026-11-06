@@ -141,7 +141,7 @@ fn test_user_agent_shape() {
 }
 
 // 2. Credentials round-trip through CredentialsStore with a temp path:
-//    both auth types, nulls preserved as None, and an unparseable file reading as not signed in
+//    both auth types, nulls preserved as None, and an unparsable file reading as not signed in
 #[test]
 fn test_credentials_round_trip() {
     let store = temp_store();
@@ -191,7 +191,7 @@ fn test_credentials_round_trip() {
     let loaded_api = store.load().unwrap().expect("should load api credentials");
     assert_eq!(loaded_api, api_creds);
 
-    // Unparseable file reads as not signed in
+    // Unparsable file reads as not signed in
     std::fs::write(&store.path, "corrupted { invalid json").unwrap();
     assert!(store.load().unwrap().is_none());
 
