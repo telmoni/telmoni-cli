@@ -19,7 +19,6 @@ The `telmoni` command-line client ([`telmoni/telmoni-cli`](https://github.com/te
 | `.github/workflows/` | `ci.yml`, the gate on Linux and macOS and actionlint; `release.yml`, a release on the owner's approval; `audit.yml`, the lock checked against RustSec's advisories each day. |
 | `ARCHITECTURE.md` | How the CLI is built, and why, on one page: the repository's one internal document. |
 | [`telmoni/telmoni`](https://github.com/telmoni/telmoni) | Sibling repo, checked out as `../telmoni`: the platform and its four SDKs (`sdk/`), the authority on the wire contract, and the customer docs (`web/content/docs`), the CLI's page (`api/cli.mdx`) among them, which its console serves at `/docs`. |
-| [`telmoni/skills`](https://github.com/telmoni/skills) | Sibling repo, checked out as `../skills`: the agent skill, whose `skills/telmoni/references/cli.md` restates this CLI. |
 
 ## Commands
 - **After every change** (no permission needed; report failures verbatim): `cargo xtask ci`, which runs fmt, checks that the toolchain channel matches `rust-version`, then clippy, build, test, doc and `cargo deny check`, all `--locked`.
@@ -44,7 +43,7 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 
 ## Agent Hygiene
 - **This repo only:** change nothing in another repository (`telmoni/telmoni`, any other) unless the user says so for this task; that binds subagents too. Reading is fine.
-- Edit `AGENTS.md` (`.github/copilot-instructions.md` points here) only when the user asks outright; otherwise propose a diff.
+- Edit `AGENTS.md` only when the user asks outright; otherwise propose a diff.
 - Comments are for a person reading the code, and short: they say *why*, never *what* — a doc comment in a line or two, an inline comment in one, a test's doc in one line on what it proves. The reasoning behind a change (a race worked through, the designs turned down, its history) goes in `ARCHITECTURE.md` or the commit message, never above a function, and editing a comment means shortening its whole block. No AI signatures anywhere.
 - No scripted bulk edits: edit each file deliberately (formatters, generators and an approved lockfile write excepted). One-off scripts, backups and logs go in `/tmp/telmoni/`.
 - Never read, print, diff or recreate `.env` or the real saved login, the Keychain item `telmoni` on a Mac and the credentials file: they hold an API key or a refresh token. Change one key by name, after `cp -p` to `/tmp/telmoni/`.
@@ -61,5 +60,5 @@ The platform's code is the contract: in [`telmoni/telmoni`](https://github.com/t
 - [ ] `cargo xtask ci` passes, or the failure is reported verbatim.
 - [ ] No secret, token, device code, API key or PII reaches output, a log or a commit.
 - [ ] `ARCHITECTURE.md` still says what the code does: a change that alters a line there updates it in the same change.
-- [ ] A change a user can see names the pages it leaves wrong (`web/content/docs/api/cli.mdx` in `telmoni/telmoni`, `skills/telmoni/references/cli.md` in `telmoni/skills`).
+- [ ] A change a user can see names the pages it leaves wrong (`web/content/docs/api/cli.mdx` in `telmoni/telmoni`).
 - [ ] Nothing that needs asking happened unasked (dependencies, external state, other repos, commits).
