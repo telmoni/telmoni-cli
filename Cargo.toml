@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "The official Telmoni CLI (`telmoni`)."
+description = "Command-line client for Telmoni: sign in from a terminal or CI, see who you are, and switch organizations. Telmoni is privacy-first, open-source monitoring for AI agents."
 keywords = ["telmoni", "cli", "observability", "agents"]
 categories = ["command-line-utilities"]
 # What `cargo install` builds, and nothing else of the repository.
