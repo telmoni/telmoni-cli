@@ -3,7 +3,7 @@
 [![CI](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/telmoni/telmoni-cli/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-`telmoni`, the command-line client for [Telmoni](https://github.com/telmoni/telmoni), privacy-first, open-source monitoring for AI agents: sign in from a terminal or CI, see who you are, and switch organizations. It talks to one platform and to nothing else, `https://api.telmoni.com`, the machine host, unless `TELMONI_ENDPOINT` names another. The SDKs that record an agent's runs are the platform's, under [`sdk/`](https://github.com/telmoni/telmoni/tree/main/sdk) in that repository, and documented at [telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks); prompts stay in your process unless you turn content on.
+`telmoni`, the command-line client for [Telmoni](https://github.com/telmoni/telmoni), privacy-first, open-source monitoring for AI agents: sign in from a terminal or CI, see who you are, and switch organizations. It talks to one platform and to nothing else, `https://api.telmoni.com`, the machine host, unless `TELMONI_ENDPOINT` names another. The SDKs that record an agent's traces are the platform's, under [`sdk/`](https://github.com/telmoni/telmoni/tree/main/sdk) in that repository, and documented at [telmoni.com/docs/api/sdks](https://telmoni.com/docs/api/sdks); prompts stay in your process unless you turn content on.
 
 ## Install
 
