@@ -23,7 +23,9 @@ pub struct LoginArgs {
     #[arg(long, conflicts_with = "no_browser")]
     pub with_key: bool,
 
-    /// Target Telmoni endpoint URL (e.g. `https://api.telmoni.com`).
+    /// Your self-hosted Telmoni deployment's URL (e.g.
+    /// `https://telmoni.example.com`); required unless `TELMONI_ENDPOINT` or
+    /// the config file's `endpoint` names one.
     #[arg(long, env = "TELMONI_ENDPOINT")]
     pub endpoint: Option<String>,
 
@@ -46,10 +48,10 @@ pub fn validate_api_key(key: &str) -> Result<()> {
 /// with its scheme's default filled in — or on the console beside a machine
 /// host, the host `endpoint` has with its leading `api.` taken off, over the
 /// same scheme and port. The device page is the console's, and a platform
-/// keeps its console and its machine host apart (`telmoni.com` beside
-/// `api.telmoni.com`), so the one page the CLI opens unasked is the one the
-/// platform it signs in to named, and never an address a stranger's answer
-/// could point it at.
+/// may keep its console and its machine host apart (`telmoni.example.com`
+/// beside `api.telmoni.example.com`), so the one page the CLI opens unasked
+/// is the one the platform it signs in to named, and never an address a
+/// stranger's answer could point it at.
 pub fn same_deployment(candidate: &str, endpoint: &str) -> bool {
     let (Ok(candidate), Ok(endpoint)) = (
         reqwest::Url::parse(candidate),
@@ -92,7 +94,7 @@ where
     S: FnMut(Duration) -> SF,
     SF: Future<Output = ()>,
 {
-    let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config);
+    let endpoint = resolve_endpoint(args.endpoint.as_deref(), endpoint_env.as_deref(), config)?;
 
     if args.with_key {
         return login_with_api_key(read_key()?.trim(), endpoint, store);
@@ -194,12 +196,12 @@ mod tests {
     #[test]
     fn the_console_beside_a_machine_host_is_the_same_deployment() {
         assert!(same_deployment(
-            "https://telmoni.com/auth/device?code=ABCD",
-            "https://api.telmoni.com"
+            "https://telmoni.example.com/auth/device?code=ABCD",
+            "https://api.telmoni.example.com"
         ));
         assert!(same_deployment(
-            "https://dev.telmoni.com/auth/device",
-            "https://api.dev.telmoni.com"
+            "https://dev.example.com/auth/device",
+            "https://api.dev.example.com"
         ));
         assert!(same_deployment(
             "https://telmoni.example.com/auth/device",
@@ -217,24 +219,27 @@ mod tests {
     fn any_other_address_is_not() {
         assert!(!same_deployment(
             "https://evil.example/auth/device",
-            "https://api.telmoni.com"
+            "https://api.telmoni.example.com"
         ));
         assert!(!same_deployment(
-            "https://api.telmoni.com/auth/device",
-            "https://telmoni.com"
+            "https://api.telmoni.example.com/auth/device",
+            "https://telmoni.example.com"
         ));
         assert!(!same_deployment(
-            "https://notapi.telmoni.com/auth/device",
-            "https://api.telmoni.com"
+            "https://notapi.telmoni.example.com/auth/device",
+            "https://api.telmoni.example.com"
         ));
         assert!(!same_deployment(
-            "http://telmoni.com/auth/device",
-            "https://api.telmoni.com"
+            "http://telmoni.example.com/auth/device",
+            "https://api.telmoni.example.com"
         ));
         assert!(!same_deployment(
-            "https://telmoni.com:8443/auth/device",
-            "https://api.telmoni.com"
+            "https://telmoni.example.com:8443/auth/device",
+            "https://api.telmoni.example.com"
         ));
-        assert!(!same_deployment("not a url", "https://api.telmoni.com"));
+        assert!(!same_deployment(
+            "not a url",
+            "https://api.telmoni.example.com"
+        ));
     }
 }

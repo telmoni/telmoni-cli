@@ -33,8 +33,10 @@ pub async fn execute(
     let Some(mut creds) = store.load()? else {
         // A script that asked for JSON reads stdout as JSON: it gets that or
         // nothing, and the refusal on stderr.
-        if !args.json {
-            let endpoint = crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config);
+        if !args.json
+            && let Ok(endpoint) =
+                crate::config::resolve_endpoint(None, endpoint_env.as_deref(), config)
+        {
             println!("Endpoint: {}", loggable_url(&endpoint));
         }
         return Err(
@@ -101,8 +103,8 @@ impl UnusedLogin {
 }
 
 /// Executes `status` for a key supplied for this command alone, at
-/// `endpoint` (the flag-less one: `TELMONI_ENDPOINT`, the configuration
-/// file, the default). The key stands in for the saved login, which is
+/// `endpoint` (the flag-less one: `TELMONI_ENDPOINT`, then the
+/// configuration file). The key stands in for the saved login, which is
 /// never written here; `unused` is that login, named as not in use.
 pub async fn execute_with_key(
     args: StatusArgs,

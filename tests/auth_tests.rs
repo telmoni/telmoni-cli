@@ -1138,8 +1138,8 @@ async fn test_logout_outcomes() {
 }
 
 // 9b. Endpoint precedence: flag, then TELMONI_ENDPOINT as main read it,
-//     then the config file, then the default; blanks are skipped and a
-//     trailing slash is dropped.
+//     then the config file, and no default: none is an error; blanks are
+//     skipped and a trailing slash is dropped.
 #[test]
 fn test_endpoint_precedence() {
     use telmoni_cli::config::{Config, resolve_endpoint};
@@ -1153,49 +1153,48 @@ fn test_endpoint_precedence() {
             Some("https://flag.example/"),
             Some("https://env.example"),
             &config
-        ),
+        )
+        .unwrap(),
         "https://flag.example"
     );
     assert_eq!(
-        resolve_endpoint(Some("  "), Some("https://env.example"), &config),
+        resolve_endpoint(Some("  "), Some("https://env.example"), &config).unwrap(),
         "https://env.example"
     );
     assert_eq!(
-        resolve_endpoint(None, None, &config),
+        resolve_endpoint(None, None, &config).unwrap(),
         "https://from-config.example"
     );
+    let unset = resolve_endpoint(None, Some(""), &Config::default()).unwrap_err();
+    assert!(unset.to_string().contains("TELMONI_ENDPOINT"), "{unset}");
     assert_eq!(
-        resolve_endpoint(None, Some(""), &Config::default()),
-        "https://api.telmoni.com"
-    );
-    assert_eq!(
-        resolve_endpoint(Some("api.example.com/"), None, &Config::default()),
+        resolve_endpoint(Some("api.example.com/"), None, &Config::default()).unwrap(),
         "https://api.example.com"
     );
     assert_eq!(
-        resolve_endpoint(Some("localhost:3000/"), None, &Config::default()),
+        resolve_endpoint(Some("localhost:3000/"), None, &Config::default()).unwrap(),
         "http://localhost:3000"
     );
     assert_eq!(
-        resolve_endpoint(Some("127.0.0.1:8080"), None, &Config::default()),
+        resolve_endpoint(Some("127.0.0.1:8080"), None, &Config::default()).unwrap(),
         "http://127.0.0.1:8080"
     );
     assert_eq!(
-        resolve_endpoint(Some("[::1]:3000"), None, &Config::default()),
+        resolve_endpoint(Some("[::1]:3000"), None, &Config::default()).unwrap(),
         "http://[::1]:3000"
     );
     // A bare host gets plain HTTP only when it is this machine, not when its
     // name merely starts like one that is.
     assert_eq!(
-        resolve_endpoint(Some("localhost.example.com"), None, &Config::default()),
+        resolve_endpoint(Some("localhost.example.com"), None, &Config::default()).unwrap(),
         "https://localhost.example.com"
     );
     assert_eq!(
-        resolve_endpoint(Some("127.0.0.1.example.com"), None, &Config::default()),
+        resolve_endpoint(Some("127.0.0.1.example.com"), None, &Config::default()).unwrap(),
         "https://127.0.0.1.example.com"
     );
     assert_eq!(
-        resolve_endpoint(Some(" / "), Some("https://env.example"), &Config::default()),
+        resolve_endpoint(Some(" / "), Some("https://env.example"), &Config::default()).unwrap(),
         "https://env.example"
     );
 }

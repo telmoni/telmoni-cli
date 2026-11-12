@@ -11,10 +11,6 @@ use crate::auth::key::env_key_digest;
 use crate::auth::storage::{io_step, write_replacing};
 use crate::transport::{is_loopback_host, loggable_url};
 
-/// Default Telmoni API endpoint: the machine host, where the server serves
-/// the lanes a machine calls straight; the console's host answers people.
-pub const DEFAULT_TELMONI_ENDPOINT: &str = "https://api.telmoni.com";
-
 /// CLI configuration file structure (`~/.config/telmoni/config.json`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -75,10 +71,15 @@ fn normalize_endpoint_url(s: &str) -> Option<String> {
 
 /// The endpoint a command that holds no stored credentials talks to, in
 /// precedence order: the `--endpoint` flag, then `TELMONI_ENDPOINT` (read by
-/// `main` and passed in as `env_value`), then the config file, then the
-/// default. Pure, so it is testable; the environment is read only at the
-/// command entry point.
-pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Config) -> String {
+/// `main` and passed in as `env_value`), then the config file. There is no
+/// default: Telmoni is self-hosted, so with none of them set this is an
+/// error naming them. Pure, so it is testable; the environment is read only
+/// at the command entry point.
+pub fn resolve_endpoint(
+    flag: Option<&str>,
+    env_value: Option<&str>,
+    config: &Config,
+) -> Result<String> {
     // clap fills `--endpoint` from `TELMONI_ENDPOINT` too, so the first
     // source cannot tell the two apart.
     let (endpoint, source) = flag
@@ -96,10 +97,15 @@ pub fn resolve_endpoint(flag: Option<&str>, env_value: Option<&str>, config: &Co
                 .and_then(normalize_endpoint_url)
                 .map(|e| (e, "the configuration file"))
         })
-        .unwrap_or_else(|| (DEFAULT_TELMONI_ENDPOINT.to_string(), "the default"));
+        .context(NO_ENDPOINT)?;
     debug!(endpoint = %loggable_url(&endpoint), source, "endpoint");
-    endpoint
+    Ok(endpoint)
 }
+
+/// What a command that needs an endpoint says when none is set.
+const NO_ENDPOINT: &str = "no Telmoni endpoint set: name your self-hosted deployment's \
+    URL with `telmoni login --endpoint <URL>`, TELMONI_ENDPOINT=<URL> or \
+    `telmoni config set endpoint <URL>`";
 
 /// Loads the configuration file at `path`; a missing one is the default.
 pub fn load_config(path: &Path) -> Result<Config> {
@@ -118,7 +124,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
 }
 
 /// Saves the configuration to the file at `path`, whole or not at all: a
-/// torn file would read as the defaults, the hosted endpoint among them.
+/// torn file would read as the defaults, its saved endpoint gone.
 /// It holds no secret, so its mode is the umask's.
 pub fn save_config(path: &Path, config: &Config) -> Result<()> {
     let json = serde_json::to_string_pretty(config).context("serializing config")?;

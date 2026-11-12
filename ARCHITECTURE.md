@@ -39,8 +39,8 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 
 | For | Read |
 |---|---|
-| Using the CLI | [telmoni.com/docs/api/cli](https://telmoni.com/docs/api/cli) |
-| Developing it | `README.md`, `AGENTS.md`, and [Developing](https://telmoni.com/docs/contributing/developing#the-cli) |
+| Using the CLI | [`web/content/docs/api/cli.mdx`](https://github.com/telmoni/telmoni/blob/main/web/content/docs/api/cli.mdx) in `telmoni/telmoni` |
+| Developing it | `README.md`, `AGENTS.md`, and [Developing](https://github.com/telmoni/telmoni/blob/main/web/content/docs/contributing/developing.mdx#the-cli) |
 
 ## Goals and constraints
 
@@ -48,7 +48,7 @@ It is **one Rust binary**, a thin shell over a library the tests drive directly,
 
 | Goal | How |
 |---|---|
-| **It talks to one platform, and to nothing else** | One base URL, `https://api.telmoni.com`, the machine host, unless `TELMONI_ENDPOINT` names another, and nothing in `src/` calls another host; plain HTTP only to a loopback endpoint; no redirect followed; the one page it opens unasked is the device page on that host or on the console beside it (`same_deployment` in `src/commands/login.rs`) |
+| **It talks to one platform, and to nothing else** | One base URL, the machine host of the self-hosted deployment `login --endpoint`, `TELMONI_ENDPOINT` or `config.json` names, with no default, so an unconfigured CLI calls nothing, and nothing in `src/` calls another host; plain HTTP only to a loopback endpoint; no redirect followed; the one page it opens unasked is the device page on that host or on the console beside it (`same_deployment` in `src/commands/login.rs`) |
 | **It works where no browser can reach it** | The device flow: the person approves a code in any browser, on any machine, and nothing listens here |
 | **A secret is never shown** | No token, refresh token, device code or API key in output or logs, and `Debug` written by hand on every struct that holds one |
 | **A key never rides a command line, and need not be saved** | `login --with-key` reads it from standard input; `TELMONI_API_KEY`, or what `api_key_helper` prints, supplies one for a single command and is never saved |
@@ -102,7 +102,7 @@ flowchart LR
 | **A person** | Who signs in, at a terminal, over SSH or in a container | Commands; the user code and the URL on stdout |
 | **A script or CI job** | Whoever holds an organization's API key | The key in `TELMONI_API_KEY` or from `api_key_helper` for each command, or saved once by `login --with-key`; then `/v1` reads |
 | **A browser, anywhere** | Where the person approves the code, on any machine | The console's `/auth/device` page; nothing reaches the CLI |
-| **The platform's server** | The one host the CLI calls, `api.telmoni.com` by default: the `/cli/v1` lanes for a session, `/v1` for a key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
+| **The platform's server** | The one host the CLI calls, the deployment the endpoint names: the `/cli/v1` lanes for a session, `/v1` for a key, behind the door that meters them by address and by credential | Every request, with the CLI's `User-Agent` and, when it acts in one, the organization's id |
 | **The platform's console** | Where the person approves the code; the CLI never calls it, and opens its device page only when it is on the endpoint's own origin or stands beside the machine host | Nothing from the CLI; the page's address, printed |
 | **A proxy** | Whatever the system's proxy variables name | Every request to another host, tunnelled through it and still encrypted; never one to this machine, which goes direct |
 | **GitHub** | Where releases, their checksums and their provenance live | The archives, `SHA256SUMS`, `install.sh` |
@@ -188,7 +188,7 @@ Every command, what it sends and in what order. Global to all: `-v`/`--verbose`,
 
 ### A key for one command
 
-`status` with `TELMONI_API_KEY` set, or else with `api_key_helper` configured, asks `/v1` with that key, at the endpoint `TELMONI_ENDPOINT`, the configuration file or the default names, and never writes the saved login; it reads it only to name it after the report as not in use (`Saved login, not in use: a device sign-in for <email>`, or `a saved API key`; `--json`: `unusedLogin`, `device` or `api_key`, absent when there is none), through `CredentialsStore::peek`, which reads as `load` does, the Keychain asked, and prints none of the store's notes. A blank variable is no variable. The helper runs through `sh` with nothing on its standard input and 30 seconds to answer; what it prints is the key, never shown, and its stderr is the person's. `login`, `logout` and `org`, which manage the saved login, say once that the variable outranks it, unless its key is still to be asked about or was declined.
+`status` with `TELMONI_API_KEY` set, or else with `api_key_helper` configured, asks `/v1` with that key, at the endpoint `TELMONI_ENDPOINT` or the configuration file names (with neither, it fails as `login` does), and never writes the saved login; it reads it only to name it after the report as not in use (`Saved login, not in use: a device sign-in for <email>`, or `a saved API key`; `--json`: `unusedLogin`, `device` or `api_key`, absent when there is none), through `CredentialsStore::peek`, which reads as `load` does, the Keychain asked, and prints none of the store's notes. A blank variable is no variable. The helper runs through `sh` with nothing on its standard input and 30 seconds to answer; what it prints is the key, never shown, and its stderr is the person's. `login`, `logout` and `org`, which manage the saved login, say once that the variable outranks it, unless its key is still to be asked about or was declined.
 
 At a terminal — standard input and standard error both one, and no `--json` — the variable's key is used only once the person said so: `status` asks on stderr, "TELMONI_API_KEY holds an API key. Use it ahead of the saved login? [y/N]", never showing the key or any part of it, and keeps the answer in `config.json` under `api_key_answers`, by the trimmed key's SHA-256, so a new key is asked about again; no answer at all, at the end of input, passes it over for that command alone. A key declined is passed over as if the variable were unset, with a note on stderr each time naming the way back, the helper then standing in where one is configured, and `config set use_api_key_env true|false` answers for the key the variable holds now. Anywhere else — CI, a pipe, `--json` — the key is used unasked whatever was answered. The choice is `env_key_use` (`auth/key.rs`); the question, which reads standard input, is `main.rs`'s.
 
@@ -226,7 +226,7 @@ Every input the CLI reads, and which wins. The environment is read once, in `mai
 
 `RUST_LOG` is not read: `-v` is the one switch for the log.
 
-**The endpoint**, for a command with no saved login to use (`login`, a signed-out `status`, `status` under a supplied key): `--endpoint`, then `TELMONI_ENDPOINT`, then `config.json`'s `endpoint`, then `DEFAULT_TELMONI_ENDPOINT`, `https://api.telmoni.com` (`resolve_endpoint` in `config.rs`, which logs its source under `-v`). Each is trimmed of spaces and trailing slashes, and one without a scheme takes `http://` for a loopback host and `https://` for any other; a blank one is skipped. A saved login carries the endpoint it was made against, and every later command on it goes there, whatever the environment says.
+**The endpoint**, for a command with no saved login to use (`login`, a signed-out `status`, `status` under a supplied key): `--endpoint`, then `TELMONI_ENDPOINT`, then `config.json`'s `endpoint` (`resolve_endpoint` in `config.rs`, which logs its source under `-v`). There is no default: Telmoni is self-hosted, so with none of them `login` and `status` under a key fail, naming the three, and a signed-out `status` prints no endpoint line. Each is trimmed of spaces and trailing slashes, and one without a scheme takes `http://` for a loopback host and `https://` for any other; a blank one is skipped. A saved login carries the endpoint it was made against, and every later command on it goes there, whatever the environment says.
 
 **The key `status` acts with:** `TELMONI_API_KEY`, as the person at a terminal answered for it, then the output of `api_key_helper`, then the saved login.
 
@@ -241,7 +241,7 @@ The CLI's state is two files in one directory: the person's configuration direct
 | File | Holds | Written |
 |---|---|---|
 | `credentials.json`, or on a Mac the Keychain item | The endpoint fixed at sign-in; for the device flow the access and refresh tokens, the access token's expiry, the session row's id, the person, the cached organizations and the active one; or an API key | At sign-in, after every refresh, and by `status` and `org switch`. On a Mac to the Keychain, as a generic password under the service `telmoni` with the file's path as its account, the file only while the Keychain refuses, as a locked one does over SSH and one that would put up a dialog does when stderr is no terminal; with both, the newer is read, and a save the Keychain takes deletes the file. Elsewhere the file, atomically, mode `0600`, not encrypted |
-| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, atomically like the credentials, so a crash cannot leave a torn file that reads as the default endpoint, under the umask's mode: it holds no secret, the helper's command and never its key (`config set api_key_helper` refuses a value carrying one), a key's digest and never the key |
+| `config.json` | The endpoint to sign in against, `api_key_helper`, a command that prints an API key, an output format no command reads yet, and `api_key_answers`: by each key's SHA-256, whether a person at a terminal chose to use the key `TELMONI_API_KEY` held | By `config set` and by `status`'s question, atomically like the credentials, so a crash cannot leave a torn file that reads as no endpoint, under the umask's mode: it holds no secret, the helper's command and never its key (`config set api_key_helper` refuses a value carrying one), a key's digest and never the key |
 
 A copy that cannot be read or parsed reads as signed out, or as the default configuration, with a note that never quotes it, and a missing one silently. The `config` commands alone fail on a `config.json` that does not parse.
 
@@ -374,6 +374,7 @@ On a Mac the binary's suite reads and writes Keychain items named for its sandbo
 |---|---|---|
 | **The device flow, not a loopback redirect** | The CLI runs over SSH, in containers and on hosts with no browser | The person types a code |
 | **One base URL, the platform's machine host** | One address to configure, the same the SDKs send to, and the server answers the CLI straight, with no console in between | A self-hosted deployment routes its machine lanes by path or on a host of their own before the CLI can sign in |
+| **No default endpoint** | Telmoni is self-hosted and open source, with no hosted service, so a CLI nobody configured calls nothing rather than a domain the project may not keep | The first `login` names its deployment with `--endpoint`, `TELMONI_ENDPOINT` or `config set endpoint` |
 | **The platform's opaque tokens, the platform deciding** | No token is verified here, so nothing here can be wrong about one | A request to learn whether a session lives |
 | **A 401 read by its type, one refresh deciding** | A blip, a botched secret rotation or a proxy cannot sign every CLI out | The rules follow the platform's problem types, held in step by hand |
 | **One retry of a refresh with no answer** | The platform rotates the refresh token on use, and a spent one presented late ends the session | A second request when the first answer was lost |

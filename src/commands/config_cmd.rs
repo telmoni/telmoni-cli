@@ -6,9 +6,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::auth::key::env_key_digest;
-use crate::config::{
-    ConfigKey, DEFAULT_TELMONI_ENDPOINT, get_config_value, load_config, set_config_value,
-};
+use crate::config::{ConfigKey, get_config_value, load_config, set_config_value};
 
 /// Arguments for `telmoni config`.
 #[derive(Debug, Args)]
@@ -59,9 +57,7 @@ pub fn execute(args: ConfigArgs, path: &Path, env_key: Option<&str>) -> Result<(
             println!("-------------------------");
             println!(
                 "  endpoint:        {}",
-                config
-                    .endpoint
-                    .unwrap_or_else(|| format!("(default: {DEFAULT_TELMONI_ENDPOINT})"))
+                config.endpoint.as_deref().unwrap_or("(not set)")
             );
             println!(
                 "  output_format:   {}",

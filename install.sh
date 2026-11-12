@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh: `curl -fsSL https://telmoni.com/install.sh | sh`
+# install.sh: `curl -fsSL https://github.com/telmoni/telmoni-cli/releases/latest/download/install.sh | sh`
 #
 # Installs the `telmoni` CLI for this host.
 #
@@ -199,4 +199,4 @@ esac
 
 echo "Get started with:" >&2
 echo "  telmoni --help" >&2
-echo "  telmoni login" >&2
+echo "  telmoni login --endpoint <your deployment's URL>" >&2

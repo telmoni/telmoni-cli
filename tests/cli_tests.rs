@@ -136,23 +136,24 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-// Signed out, status prints the endpoint it would sign in against on stdout
-// and the refusal on stderr, and exits 4; with --json stdout stays empty.
-// TELMONI_ENDPOINT is read, and a blank one is no value.
+// Signed out, status prints the endpoint it would sign in against, when one
+// is set, on stdout and the refusal on stderr, and exits 4; with --json
+// stdout stays empty. TELMONI_ENDPOINT is read, and a blank one is no value.
 #[test]
 fn signed_out_status_names_the_endpoint() {
     let sandbox = Sandbox::new();
 
     let out = sandbox.run(&["status"], &[]);
     assert_eq!(out.status.code(), Some(4));
-    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
+    assert_eq!(stdout(&out), "");
     assert!(stderr(&out).contains("Not signed in"), "{}", stderr(&out));
 
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "localhost:3000")]);
     assert_eq!(stdout(&out), "Endpoint: http://localhost:3000\n");
 
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "  ")]);
-    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(stdout(&out), "");
 
     let out = sandbox.run(&["whoami", "--json"], &[]);
     assert_eq!(out.status.code(), Some(4));
@@ -217,7 +218,24 @@ fn configuration_file_through_the_binary() {
         "{}",
         stderr(&out)
     );
-    assert_eq!(stdout(&out), "Endpoint: https://api.telmoni.com\n");
+    assert_eq!(stdout(&out), "");
+}
+
+// With no endpoint from the flag, the environment or the config file, login
+// refuses before it reads a key or makes a request, and says how to name one.
+#[test]
+fn login_without_an_endpoint_names_the_ways_to_set_one() {
+    let sandbox = Sandbox::new();
+
+    for args in [&["login"][..], &["login", "--with-key"][..]] {
+        let out = sandbox.run_with_input(args, &[], "tm_0123456789abcdef\n");
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert_eq!(stdout(&out), "");
+        for named in ["--endpoint", "TELMONI_ENDPOINT", "config set endpoint"] {
+            assert!(stderr(&out).contains(named), "{}", stderr(&out));
+        }
+    }
+    assert!(!sandbox.telmoni_dir().join("credentials.json").exists());
 }
 
 // A debug build reads `.env` from the working directory, after the
@@ -234,11 +252,11 @@ fn dotenv_only_in_a_debug_build() {
 
     let out = sandbox.run(&["status"], &[]);
     let read = if cfg!(debug_assertions) {
-        "https://dotenv.example"
+        "Endpoint: https://dotenv.example\n"
     } else {
-        "https://api.telmoni.com"
+        ""
     };
-    assert_eq!(stdout(&out), format!("Endpoint: {read}\n"));
+    assert_eq!(stdout(&out), read);
 
     let out = sandbox.run(&["status"], &[("TELMONI_ENDPOINT", "https://env.example")]);
     assert_eq!(stdout(&out), "Endpoint: https://env.example\n");
